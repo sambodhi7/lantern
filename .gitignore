@@ -1,0 +1,10 @@
+node_modules/
+.npm-cache/
+artifacts/
+cache/
+coverage/
+dist/
+.env
+.env.local
+.data/
+dev-server*.log
