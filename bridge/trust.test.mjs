@@ -39,11 +39,34 @@ test('receipt identities are global, private fields are absent, and unique demo 
     assert.equal(readFileSync(file, 'utf8').includes('Blue  Coast Supplies'), false);
 
     const first = store.donor(500);
+    const otherNgoDonor = store.donor(500, second.id);
+    assert.throws(() => store.vote('harbor-hands', 'water-pump-071', otherNgoDonor.token, true), /Only donors/);
     assert.throws(() => store.vote('harbor-hands', 'water-pump-071', first.token, 'yes'), /Choose fair/);
     const reviewed = store.vote('harbor-hands', 'water-pump-071', first.token, true);
     assert.equal(reviewed.score, 72);
     assert.equal(reviewed.proofs.find(item => item.id === 'water-pump-071').status, 'approved');
     assert.throws(() => store.vote('harbor-hands', 'water-pump-071', first.token, true), /closed/);
     assert.equal(JSON.stringify(reviewed).includes('tokenHash'), false);
+  } finally { cleanup(); }
+});
+
+test('funding request, donation, public photo, and trust history survive reload without publishing private receipt fields', () => {
+  const { store, file, cleanup } = fixture();
+  try {
+    const requested = store.requestFunding('harbor-hands', { name: 'Community water station', story: 'Fund the next water station for families in the coastal area.', targetInr: 1_600_000 });
+    assert.equal(requested.campaign.fundraising.targetInr, 1_600_000);
+    const donor = store.donor(750);
+    assert.equal(store.get('harbor-hands').campaign.fundraising.raisedInr, 1_000_750);
+    const photo = 'data:image/jpeg;base64,' + Buffer.from('redacted sample image').toString('base64');
+    const result = store.proof('harbor-hands', { vendor: 'Example supplier', invoice: 'INV-099', amountInr: 1000, title: 'Pipe fittings', summary: 'Supplies delivered to the community water station.', documentHash: `0x${'b'.repeat(64)}`, publicImage: photo });
+    assert.equal(result.duplicate, false);
+    assert.equal(result.proof.publicImage, photo);
+    assert.equal(JSON.stringify(result.state).includes('Example supplier'), false);
+    assert.equal(JSON.stringify(result.state).includes('INV-099'), false);
+    const voted = store.vote('harbor-hands', 'water-pump-071', donor.token, true);
+    assert.equal(voted.scoreHistory[0].score, 72);
+    const reloaded = new TrustStore(file).get('harbor-hands');
+    assert.equal(reloaded.campaign.fundraising.raisedInr, 1_000_750);
+    assert.equal(reloaded.proofs[0].publicImage, photo);
   } finally { cleanup(); }
 });

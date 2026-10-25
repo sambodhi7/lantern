@@ -1,15 +1,16 @@
 export type TrustProof = {
   id: string; title: string; summary: string; category: string; amountInr: number;
-  commitment: string; grade: number; checks: string[]; status: 'review' | 'flagged' | 'approved';
+  commitment: string; publicImage?: string; demo?: boolean; grade: number; checks: string[]; status: 'review' | 'flagged' | 'approved';
   yes: number; no: number; final: boolean; voted: boolean; createdAt: string;
 };
 export type TrustEvent = { id: string; type: string; title: string; detail: string; amountInr?: number; createdAt: string };
 export type TrustNgo = {
   id: string; name: string; country: string; walletAddress: string;
-  campaign: { id: string; name: string; category: string; budgetInr: number };
+  campaign: { id: string; name: string; category: string; budgetInr: number; fundraising: { targetInr: number; raisedInr: number; story: string; status: string; requestedAt: string } };
   score: number; frozen: boolean; hold: { reason: string; proofId: string; createdAt: string; scope: string } | null;
   allowanceInr: number; exposureInr: number; allowanceLeftInr: number;
-  proofs: TrustProof[]; events: TrustEvent[]; demo: true;
+  proofs: TrustProof[]; events: TrustEvent[]; scoreHistory: { id: string; score: number; delta: number; reason: string; createdAt: string }[];
+  reputation: { approved: number; open: number; flagged: number }; demo: true;
 };
 
 const base = '/api/trust';
@@ -21,9 +22,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 const json = (body: unknown, token?: string): RequestInit => ({ method: 'POST', body: JSON.stringify(body), headers: token ? { authorization: `Bearer ${token}` } : undefined });
 export const fetchTrust = (token?: string) => request<TrustNgo>('/ngos/harbor-hands', token ? { headers: { authorization: `Bearer ${token}` } } : undefined);
-export const createDemoDonor = (amountInr: number) => request<{ donorId: string; token: string; amountInr: number; demo: true }>('/demo-donations', json({ amountInr }));
+export const createDemoDonor = (amountInr: number) => request<{ donorId: string; token: string; amountInr: number; demo: true }>('/demo-donations', json({ amountInr, ngoId: 'harbor-hands' }));
+export const requestFunding = (input: { name: string; story: string; targetInr: number }) => request<TrustNgo>('/ngos/harbor-hands/request', json(input));
 export const recordAdvance = (amountInr: number) => request<TrustNgo>('/ngos/harbor-hands/advances', json({ amountInr }));
-export const submitTrustProof = (input: { vendor: string; invoice: string; amountInr: number; title: string; summary: string; documentHash: string }) => request<{ duplicate: boolean; state: TrustNgo }>('/ngos/harbor-hands/proofs', json(input));
+export const submitTrustProof = (input: { vendor: string; invoice: string; amountInr: number; title: string; summary: string; documentHash: string; publicImage?: string }) => request<{ duplicate: boolean; state: TrustNgo }>('/ngos/harbor-hands/proofs', json(input));
 export const voteProof = (proofId: string, support: boolean, token: string) => request<TrustNgo>(`/ngos/harbor-hands/proofs/${encodeURIComponent(proofId)}/votes`, json({ support }, token));
 export const runTrustAttack = () => request<{ duplicate: boolean; state: TrustNgo }>('/ngos/harbor-hands/demo-attack', json({}));
 export const resetTrust = () => request<TrustNgo>('/demo/reset', json({}));

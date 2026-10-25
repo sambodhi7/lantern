@@ -11,9 +11,9 @@ cd ..
 .\scripts\start-app.ps1
 ```
 
-Open <http://127.0.0.1:5173/>. The interface shows rupees throughout. It reads the current conversion from [CoinGecko's simple price API](https://docs.coingecko.com/reference/simple-price) every minute, shows the update time, and marks older sample chain amounts as estimates at today's rate. If the rate is missing or older than five minutes, those estimates say “Rate unavailable.” Trust limits, local payment records, receipt amounts, and demo gifts are stored directly in INR and do not depend on that market rate.
+Open <http://127.0.0.1:5173/>. The donor page follows one path: NGO funding request, rupee donation, public proof photos and votes, money trail, and trust history. Choose **For NGOs** to edit the funding request, record a local payment, and publish a proof. The interface shows rupees throughout. Trust limits, local payment records, receipt amounts, and demo donations are stored in INR.
 
-The demo checkout is simulated, but the NGO profiles, trust scores, local payment limits, receipt fingerprints, reviews, and duplicate holds now run in the local backend and persist in `bridge/.data/trust.json`. The NGO's secure-account connection can read a live balance. The on-ramp path below is separate from the demo checkout and only appears when its provider credentials are configured. The trust backend does **not** yet enforce its limit or hold in the Solidity contract; the UI labels local advances as demo payments.
+The demo checkout is simulated, but the NGO profiles, trust scores, local payment limits, receipt fingerprints, reviews, and duplicate holds run in the local backend and persist in `bridge/.data/trust.json`. A sample proof photo is synthetic and labeled as such. NGO operators can upload a photo, click areas to cover private details, and confirm their review before publishing; the browser exports only the edited image and strips original file metadata. This is manual redaction, not an automatic identity detector. The on-ramp path below appears when provider credentials are configured. The trust backend does **not** yet enforce its limit or hold in the Solidity contract; local payments are labeled as demo records.
 
 ### Trust backend
 

@@ -131,7 +131,10 @@ export const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/health') return reply(res, 200, { ok: true, configured });
     if (req.method === 'GET' && url.pathname === '/api/trust/ngos') return reply(res, 200, trust.list());
     if (req.method === 'POST' && url.pathname === '/api/trust/ngos') return reply(res, 201, trust.register(JSON.parse(await bodyText(req))));
-    if (req.method === 'POST' && url.pathname === '/api/trust/demo-donations') return reply(res, 201, trust.donor(Number(JSON.parse(await bodyText(req)).amountInr)));
+    if (req.method === 'POST' && url.pathname === '/api/trust/demo-donations') {
+      const body = JSON.parse(await bodyText(req));
+      return reply(res, 201, trust.donor(Number(body.amountInr), String(body.ngoId || 'harbor-hands')));
+    }
     if (req.method === 'POST' && url.pathname === '/api/trust/demo/reset') return reply(res, 200, trust.reset());
     const ngoMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)$/.exec(url.pathname);
     if (req.method === 'GET' && ngoMatch) {
@@ -142,6 +145,8 @@ export const server = createServer(async (req, res) => {
     }
     const advanceMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/advances$/.exec(url.pathname);
     if (req.method === 'POST' && advanceMatch) return reply(res, 201, trust.advance(advanceMatch[1], JSON.parse(await bodyText(req))));
+    const requestMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/request$/.exec(url.pathname);
+    if (req.method === 'POST' && requestMatch) return reply(res, 200, trust.requestFunding(requestMatch[1], JSON.parse(await bodyText(req))));
     const proofMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/proofs$/.exec(url.pathname);
     if (req.method === 'POST' && proofMatch) return reply(res, 201, trust.proof(proofMatch[1], JSON.parse(await bodyText(req))));
     const attackMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/demo-attack$/.exec(url.pathname);
