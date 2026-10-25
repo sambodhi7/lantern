@@ -2,6 +2,7 @@ export type TrustProof = {
   id: string; title: string; summary: string; category: string; amountInr: number;
   commitment: string; publicImage?: string; demo?: boolean; grade: number; checks: string[]; status: 'review' | 'flagged' | 'approved';
   yes: number; no: number; final: boolean; voted: boolean; createdAt: string;
+  verification?: { model: string; status: string; privacy: string; checks: { amountMatches: boolean; categoryMatches: boolean; readable: boolean; suspicious: boolean; identityPresent: boolean }; limitation: string };
 };
 export type TrustEvent = { id: string; type: string; title: string; detail: string; amountInr?: number; createdAt: string };
 export type TrustNgo = {
@@ -25,7 +26,7 @@ export const fetchTrust = (token?: string) => request<TrustNgo>('/ngos/harbor-ha
 export const createDemoDonor = (amountInr: number) => request<{ donorId: string; token: string; amountInr: number; demo: true }>('/demo-donations', json({ amountInr, ngoId: 'harbor-hands' }));
 export const requestFunding = (input: { name: string; story: string; targetInr: number }) => request<TrustNgo>('/ngos/harbor-hands/request', json(input));
 export const recordAdvance = (amountInr: number) => request<TrustNgo>('/ngos/harbor-hands/advances', json({ amountInr }));
-export const submitTrustProof = (input: { vendor: string; invoice: string; amountInr: number; title: string; summary: string; documentHash: string; publicImage?: string }) => request<{ duplicate: boolean; state: TrustNgo }>('/ngos/harbor-hands/proofs', json(input));
+export const submitTrustProof = (input: { vendor: string; invoice: string; amountInr: number; title: string; summary: string; documentHash: string; publicImage?: string; evidenceId?: string; privacyReviewed?: boolean }) => request<{ duplicate: boolean; state: TrustNgo }>('/ngos/harbor-hands/proofs', json(input));
 export const voteProof = (proofId: string, support: boolean, token: string) => request<TrustNgo>(`/ngos/harbor-hands/proofs/${encodeURIComponent(proofId)}/votes`, json({ support }, token));
 export const runTrustAttack = () => request<{ duplicate: boolean; state: TrustNgo }>('/ngos/harbor-hands/demo-attack', json({}));
 export const resetTrust = () => request<TrustNgo>('/demo/reset', json({}));

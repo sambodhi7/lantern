@@ -7,12 +7,16 @@
     "test": "hardhat test",
     "demo": "hardhat run scripts/demo.ts",
     "bridge": "node bridge/server.mjs",
-    "bridge:test": "node --test bridge/server.test.mjs bridge/trust.test.mjs"
+    "bridge:test": "node --test bridge/server.test.mjs bridge/trust.test.mjs bridge/verification.test.mjs bridge/database.test.mjs"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.0",
     "@openzeppelin/contracts": "^5.0.0",
     "hardhat": "^3.0.0",
     "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "pg": "^8.23.1",
+    "sharp": "^0.35.5"
   }
 }

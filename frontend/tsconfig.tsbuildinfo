@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/simpleapp.tsx","./src/inr.ts","./src/main.tsx","./src/onmeta.ts","./src/trust.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/receiptverifier.tsx","./src/simpleapp.tsx","./src/inr.ts","./src/main.tsx","./src/onmeta.ts","./src/trust.ts"],"version":"5.9.3"}

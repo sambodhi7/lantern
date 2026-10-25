@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createHmac, randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createServer } from 'node:http';
+import { VerificationService, seal } from './verification.mjs';
 
 const temp = mkdtempSync(join(tmpdir(), 'lantern-bridge-test-'));
 const ledger = '0x2222222222222222222222222222222222222222';
@@ -17,9 +18,11 @@ const rpcServer = createServer(async (req, res) => {
     value: `0x${2000000000000000n.toString(16)}`,
     input: `0xf14faf6f${1n.toString(16).padStart(64, '0')}`,
   };
+  const known = ['a','b','c'].some(c => params[0] === `0x${c.repeat(64)}`);
   const result = method === 'eth_chainId' ? '0x1'
-    : method === 'eth_getTransactionByHash' && params[0] === `0x${'b'.repeat(64)}` ? tx
-    : method === 'eth_getTransactionReceipt' && params[0] === `0x${'b'.repeat(64)}` ? { status: '0x1', blockNumber: '0x1' }
+    : method === 'eth_blockNumber' ? '0x4'
+    : method === 'eth_getTransactionByHash' && known ? (params[0] === `0x${'b'.repeat(64)}` ? tx : { ...tx, to: process.env.ONMETA_TREASURY_ADDRESS })
+    : method === 'eth_getTransactionReceipt' && known ? { status: '0x1', blockNumber: '0x1' }
     : null;
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result }));
@@ -66,6 +69,12 @@ test('converted funds only become protected after an independently checked campa
   assert.equal((await post(`/api/onramp/intents/${intent.id}/escrow`, { txHash: `0x${'b'.repeat(64)}` })).status, 200);
   read = await (await fetch(`${base}/api/onramp/intents/${intent.id}`)).json();
   assert.equal(read.status, 'escrowed');
+  assert.equal((await post('/webhooks/onmeta', order, signature)).status, 200);
+  read = await (await fetch(`${base}/api/onramp/intents/${intent.id}`)).json();
+  assert.equal(read.status, 'escrowed', 'webhook replay cannot move escrowed funds backward');
+  assert.equal((await post(`/api/onramp/intents/${intent.id}/escrow`, { txHash: `0x${'b'.repeat(64)}` })).status, 200);
+  const ngo = await (await fetch(`${base}/api/trust/ngos/harbor-hands`)).json();
+  assert.equal(ngo.campaign.fundraising.raisedInr, 1_001_000, 'settlement credited exactly once');
 });
 
 test('signed completed order changes only the matching intent, once', async () => {
@@ -101,4 +110,24 @@ test('signed completed order changes only the matching intent, once', async () =
   const reused = { ...order, metaData: { donationIntentId: second.id } };
   const reusedSignature = createHmac('sha256', process.env.ONMETA_API_SECRET).update(JSON.stringify(reused)).digest('hex');
   assert.equal((await post('/webhooks/onmeta', reused, reusedSignature)).status, 422);
+});
+
+test('publishing an analyzed receipt uses server-owned fields and requires a privacy review', async () => {
+  const verifier=new VerificationService({dataDir:temp,apiKey:''});
+  const id=randomUUID();
+  const publicRecord={id,ngoId:'harbor-hands',amountInr:1000,title:'Receipt for campaign supplies',summary:'Expense evidence with private fields withheld.',documentHash:`0x${'e'.repeat(64)}`,publicImage:'',privacy:'image_withheld',status:'checks_passed',model:'test-model',checks:{amountMatches:true,categoryMatches:true,readable:true,suspicious:false,identityPresent:true},limitation:'Assessment only.'};
+  const analysis={vendor:'Private Test Supplier',invoice:'TEST-PRIVATE-001'};
+  writeFileSync(join(temp,'evidence',`${id}.json`),JSON.stringify({ngoId:'harbor-hands',analysis:seal(JSON.stringify({analysis,publicRecord}),verifier.key).toString('base64')}));
+  const input={evidenceId:id,privacyReviewed:false,vendor:'Spoofed Vendor',invoice:'Spoofed Invoice',amountInr:999999,publicImage:'data:image/jpeg;base64,YQ==',verification:{status:'checks_passed'}};
+  assert.equal((await post('/api/trust/ngos/harbor-hands/proofs',input)).status,400);
+  assert.equal((await post('/api/trust/ngos/harbor-hands/advances',{amountInr:1000})).status,201);
+  const response=await post('/api/trust/ngos/harbor-hands/proofs',{...input,privacyReviewed:true});
+  assert.equal(response.status,201);
+  const result=await response.json();
+  assert.equal(result.proof.amountInr,1000);
+  assert.equal(result.proof.publicImage,'');
+  assert.equal(result.proof.verification.model,'test-model');
+  assert.equal(JSON.stringify(result).includes('Private Test Supplier'),false);
+  const repeated=await (await post('/api/trust/ngos/harbor-hands/proofs',{...input,privacyReviewed:true})).json();
+  assert.equal(repeated.duplicate,true);
 });

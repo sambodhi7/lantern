@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $bundledNode = 'C:\Users\SAMBODHI\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
 $node = if (Test-Path -LiteralPath $bundledNode) { $bundledNode } else { (Get-Command node -ErrorAction Stop).Source }
+if (Test-Path -LiteralPath (Join-Path $root 'bridge\.data\postgres\PG_VERSION')) { & (Join-Path $PSScriptRoot 'start-postgres.ps1') }
 
 function Test-LocalPage([string]$url) {
     try { return (Invoke-WebRequest -UseBasicParsing -NoProxy -SkipHttpErrorCheck $url -TimeoutSec 3).StatusCode -eq 200 }

@@ -17,6 +17,7 @@ const fail = (status, message) => { const error = new Error(message); error.stat
 export class TrustStore {
   constructor(file) {
     this.file = file;
+    if (!file) { this.data = this.seed(); return; }
     mkdirSync(dirname(file), { recursive: true });
     if (existsSync(file)) { this.data = JSON.parse(readFileSync(file, 'utf8')); this.migrate(); }
     else { this.data = this.seed(); this.save(); }
@@ -60,7 +61,7 @@ export class TrustStore {
     }
     this.data.version = 2; this.save();
   }
-  save() { const temporary = `${this.file}.tmp`; writeFileSync(temporary, JSON.stringify(this.data, null, 2)); renameSync(temporary, this.file); }
+  save() { if (!this.file) return; const temporary = `${this.file}.tmp`; writeFileSync(temporary, JSON.stringify(this.data, null, 2)); renameSync(temporary, this.file); }
   reset() { this.data = this.seed(); this.save(); return this.get('harbor-hands'); }
   ngo(id) { const ngo = this.data.ngos.find(item => item.id === id); if (!ngo) fail(404, 'NGO not found.'); return ngo; }
   campaign(ngo) { return ngo.campaigns[0]; }
@@ -141,9 +142,13 @@ export class TrustStore {
     const wrongCategory = keyText(category) !== keyText(campaign.category);
     const checks = ['Invoice identity unique across NGOs and campaigns', documentHash ? 'Document fingerprint recorded' : 'No document fingerprint supplied', wrongCategory ? 'Category differs from campaign' : 'Category matches campaign', overclaim ? 'Claim exceeds recorded local payments' : 'Claim fits recorded local payments'];
     const grade = clamp(95 - (documentHash ? 0 : 20) - (overclaim ? 35 : 0) - (wrongCategory ? 30 : 0) - (summary.length < 35 ? 15 : 0));
-    const flagged = overclaim || wrongCategory || !documentHash || grade < 70;
+    const flagged = overclaim || wrongCategory || !documentHash || grade < 70 || input.verification?.status === 'needs_review';
     const proof = { id: randomUUID(), title, summary, category, amountInr, invoiceKey, documentKey, commitment: `0x${this.digest(`${invoiceKey}|${amountInr}|${category}`)}`, publicImage, grade, checks, status: flagged ? 'flagged' : 'review', yes: 0, no: 0, final: flagged, voters: [], createdAt: now(), demo: true };
     campaign.proofs.unshift(proof);
+    if (input.verification) {
+      proof.evidenceId = input.verification.id;
+      proof.verification = { model: input.verification.model, status: input.verification.status, privacy: input.verification.privacy, checks: input.verification.checks, limitation: input.verification.limitation };
+    }
     campaign.events.unshift({ id: randomUUID(), type: flagged ? 'flag' : 'proof', title: flagged ? 'Receipt needs review' : 'Receipt fingerprint published', detail: flagged ? 'Consistency checks flagged the submission.' : 'Only a redacted summary and commitment are public.', amountInr, createdAt: now() });
     this.save(); return { duplicate: false, proof: this.publicProof(proof), state: this.get(id) };
   }
@@ -158,6 +163,16 @@ export class TrustStore {
     campaign.events.unshift({ id: randomUUID(), type: 'donation', title: 'Demo donation added', detail: 'Simulated contribution; no money was charged.', amountInr, createdAt: now(), demo: true });
     this.save();
     return { donorId: donor.id, token, amountInr, demo: true };
+  }
+  creditPayment(intentId, amountInr, transaction) {
+    const campaign = this.campaign(this.ngo('harbor-hands'));
+    campaign.creditedPayments ||= [];
+    if (campaign.creditedPayments.includes(intentId)) return;
+    campaign.creditedPayments.push(intentId);
+    campaign.budgetInr += amountInr;
+    campaign.fundraising.raisedInr += amountInr;
+    campaign.events.unshift({ id: randomUUID(), type: 'donation', title: 'Campaign deposit confirmed', detail: 'Provider conversion and campaign deposit independently verified on-chain.', amountInr, transaction, createdAt: now(), demo: false });
+    this.save();
   }
   findDonor(token) {
     if (!/^[\da-f]{64}$/.test(token || '')) fail(401, 'A demo donation token is required to vote.');
