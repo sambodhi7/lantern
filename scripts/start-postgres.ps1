@@ -8,7 +8,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $cluster 'PG_VERSION'))) {
 }
 & (Join-Path $pgBin 'pg_ctl.exe') -D $cluster status | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    & (Join-Path $pgBin 'pg_ctl.exe') -D $cluster -l (Join-Path $cluster 'server.log') -o '-p 55432 -h 127.0.0.1' -w start
+    & (Join-Path $pgBin 'pg_ctl.exe') -D $cluster -l (Join-Path $projectRoot 'bridge\.data\postgres-server.log') -o '-p 55432 -h 127.0.0.1' -w start
     if ($LASTEXITCODE -ne 0) { throw 'Could not start the local PostgreSQL cluster.' }
 }
 $databaseExists = & (Join-Path $pgBin 'psql.exe') -h 127.0.0.1 -p 55432 -U lantern -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='lantern'"

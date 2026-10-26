@@ -4,9 +4,10 @@ import { confirmEscrowDeposit, createOnrampIntent, fetchOnrampConfig, fetchOnram
 import { createDemoDonor, fetchTrust, recordAdvance, requestFunding, resetTrust, submitTrustProof, voteProof, type TrustNgo, type TrustProof } from './trust';
 import { formatInr } from './inr';
 import ReceiptVerifier, { VerificationNote } from './ReceiptVerifier';
+import BlockchainPanel from './BlockchainPanel';
 
 type Mark = { x: number; y: number; w: number; h: number };
-type View = 'donor' | 'ngo';
+type View = 'donor' | 'ngo' | 'blockchain';
 const seedName = 'Clean water for coastal Kenya';
 const seedStory = 'Help fund a reliable water point and pipe network for coastal communities. Follow each local payment and the evidence submitted for it.';
 const short = (value: string, length = 18) => value.length > length ? `${value.slice(0, length)}…${value.slice(-5)}` : value;
@@ -17,7 +18,7 @@ async function fingerprint(text: string) {
 }
 
 export default function SimpleApp() {
-  const [view, setView] = useState<View>('donor');
+  const [view, setView] = useState<View>(window.location.hash === '#blockchain' ? 'blockchain' : 'donor');
   const [ngo, setNgo] = useState<TrustNgo | null>(null);
   const [donorToken, setDonorToken] = useState(() => localStorage.getItem('lantern-demo-donor-token') || '');
   const [pendingVote, setPendingVote] = useState<{ proofId: string; support: boolean } | null>(null);
@@ -43,9 +44,19 @@ export default function SimpleApp() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bitmapRef = useRef<ImageBitmap | null>(null);
 
+  useEffect(() => {
+    const onHashChange = () => {
+      setView(window.location.hash === '#blockchain' ? 'blockchain' : 'donor');
+      window.scrollTo({top:0});
+    };
+    window.addEventListener('hashchange',onHashChange);
+    return () => window.removeEventListener('hashchange',onHashChange);
+  }, []);
+
   const refresh = async (token = donorToken) => setNgo(await fetchTrust(token));
   function navigate(next: View, section?: string) {
     setView(next);
+    window.history.replaceState(null,'',next==='blockchain'?'#blockchain':window.location.pathname);
     window.setTimeout(() => {
       if (section) document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       else window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -234,11 +245,11 @@ export default function SimpleApp() {
   }
 
   return <div className="lantern-shell">
-    <header className="lantern-header"><button className="lantern-logo" onClick={() => navigate('donor')}><span>L</span> LANTERN</button><div className="lantern-header-right"><span className="demo-label">Local demo</span><button className={view === 'ngo' ? 'mode active' : 'mode'} onClick={() => navigate(view === 'ngo' ? 'donor' : 'ngo')}>{view === 'ngo' ? 'View as donor' : 'For NGOs'} <ArrowRight size={15}/></button></div></header>
+    <header className="lantern-header"><button className="lantern-logo" onClick={() => navigate('donor')}><span>L</span> LANTERN</button><div className="lantern-header-right"><span className="demo-label">Local demo</span><button className="chain-shortcut" onClick={() => navigate('blockchain')}>Blockchain demo ↗</button><button className={view === 'ngo' ? 'mode active' : 'mode'} onClick={() => navigate(view === 'ngo' ? 'donor' : 'ngo')}>{view === 'ngo' ? 'View as donor' : 'For NGOs'} <ArrowRight size={15}/></button></div></header>
     <main className="lantern-main">
       {view === 'ngo' && <ReceiptVerifier onPublished={state => { setNgo(state); navigate('donor', 'proofs'); setNotice('Receipt processed. The public page shows the redacted record.'); }}/>}
       <nav className="pipeline" aria-label="How Lantern works"><button onClick={() => navigate('donor', 'campaign')}><b>01</b> Request</button><ChevronRight size={14}/><button onClick={() => { navigate('donor', 'campaign'); openCheckout(); }}><b>02</b> Donate</button><ChevronRight size={14}/><button onClick={() => navigate('donor', 'proofs')}><b>03</b> Show proof</button><ChevronRight size={14}/><button onClick={() => navigate('donor', 'proofs')}><b>04</b> Review</button><ChevronRight size={14}/><button onClick={() => navigate('donor', 'reputation')}><b>05</b> Track trust</button></nav>
-      {view === 'donor' ? <>
+      {view === 'blockchain' ? <BlockchainPanel/> : view === 'donor' ? <>
         <section className="campaign-request" id="campaign"><div className="section-eyebrow">FUNDING REQUEST / {ngo?.country.toUpperCase() || 'KENYA'}</div><div className="campaign-grid"><div><p className="ngo-name">{ngo?.name || 'Harbor Hands Initiative'}</p><h1>{ngo?.campaign.name || seedName}</h1><p className="campaign-story">{fundraiser?.story || seedStory}</p><div className="campaign-tags"><span>{ngo?.campaign.category || 'Water infrastructure'}</span><span>{ngo?.frozen ? 'Local payments paused' : 'Fundraising open'}</span></div></div><div className="funding-box"><span>Raised for this project</span><strong>{formatInr(raised)}</strong><div className="funding-bar"><i style={{ width: `${progress}%` }}/></div><div className="funding-meta"><span>{progress}% of {formatInr(target)} goal</span><span>Demo figures</span></div><button onClick={() => openCheckout()}>Donate in rupees <ArrowRight size={17}/></button><small>No crypto wallet needed. Demo payments are simulated.</small></div></div></section>
         {intent && <div className="payment-line"><strong>Your {formatInr(intent.amountInr)} payment:</strong><span>{intent.status === 'escrowed' ? 'Protected in campaign' : intent.status === 'converted_to_account' ? 'Converted; awaiting campaign deposit' : 'Checkout in progress'}</span></div>}
         <section className="proof-section" id="proofs"><div className="section-heading"><div><span className="section-eyebrow">PROOF FROM THE FIELD</span><h2>What the NGO has shown</h2><p>Public photos and summaries leave private documents out of view.</p></div><span className="section-count">{ngo?.proofs.length || 0} RECEIPTS</span></div><div className="proof-feed">{ngo?.proofs.map(proof => <article className="public-proof" key={proof.id}><div className="proof-photo">{proof.publicImage ? <img src={proof.publicImage} alt={`Public proof for ${proof.title}`} loading="lazy"/> : <div className="no-photo"><ImagePlus size={25}/><span>No public photo</span></div>}<span>{proof.demo ? 'Sample / demo proof' : 'NGO submitted photo'}</span></div><div className="proof-detail"><div className="proof-line"><span className={`proof-state ${proof.status}`}>{proof.status === 'approved' ? 'Community approved' : proof.status === 'flagged' ? 'Needs review' : 'Review open'}</span><span>{date(proof.createdAt)}</span></div><h3>{proof.title}</h3><p>{proof.summary}</p><VerificationNote proof={proof}/><div className="proof-amount"><span>{proof.category}</span><strong>{formatInr(proof.amountInr)}</strong></div><div className="fingerprint"><span>Receipt fingerprint</span><code>{short(proof.commitment, 26)}</code><button title="Copy fingerprint" onClick={() => void copyFingerprint(proof.commitment)}><Copy size={14}/></button></div><div className="proof-vote"><span>{proof.yes} fair · {proof.no} questioned</span>{proof.final ? <small>Review closed</small> : proof.voted ? <small>Your vote counted</small> : <div><button onClick={() => void vote(proof, true)}><Check size={14}/> Fair cost</button><button onClick={() => void vote(proof, false)}>Question cost</button></div>}</div></div></article>)}</div><p className="proof-footnote">Fingerprints detect reuse. Photos and votes help people judge a claim; they do not prove delivery by themselves.</p></section>

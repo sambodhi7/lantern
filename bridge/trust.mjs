@@ -62,7 +62,7 @@ export class TrustStore {
     this.data.version = 2; this.save();
   }
   save() { if (!this.file) return; const temporary = `${this.file}.tmp`; writeFileSync(temporary, JSON.stringify(this.data, null, 2)); renameSync(temporary, this.file); }
-  reset() { this.data = this.seed(); this.save(); return this.get('harbor-hands'); }
+  reset() { const testnet=this.data.testnet; this.data = this.seed(); if(testnet)this.data.testnet=testnet; this.save(); return this.get('harbor-hands'); }
   ngo(id) { const ngo = this.data.ngos.find(item => item.id === id); if (!ngo) fail(404, 'NGO not found.'); return ngo; }
   campaign(ngo) { return ngo.campaigns[0]; }
   allowance(campaign) { return Math.floor(campaign.budgetInr * (0.05 + campaign.score * 0.0015)); }

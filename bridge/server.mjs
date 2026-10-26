@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { TrustStore } from './trust.mjs';
 import { Database } from './database.mjs';
 import { VerificationService } from './verification.mjs';
+import { assertDonationEvent } from './chain.mjs';
+import { TestnetService } from './testnet.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const envFile = join(root, '.env.local');
@@ -34,6 +36,7 @@ const database = process.env.DATABASE_URL ? new Database(process.env.DATABASE_UR
 const trust = new TrustStore(database ? null : join(dataDir, 'trust.json'));
 if (database && existsSync(join(dataDir,'trust.json'))) { trust.data = JSON.parse(readFileSync(join(dataDir,'trust.json'),'utf8')); trust.migrate(); }
 const verification = new VerificationService({ dataDir });
+const testnet = new TestnetService();
 const intents = new Map();
 if (existsSync(dataFile)) {
   try { for (const item of JSON.parse(readFileSync(dataFile, 'utf8'))) intents.set(item.id, item); }
@@ -103,6 +106,7 @@ async function verifyEscrowTransaction(intent, txHash) {
   if (BigInt(tx.value) !== BigInt(intent.receivedWei)) throw new Error('Deposit amount does not match the conversion');
   const expectedData = `0xf14faf6f${BigInt(intent.campaignId).toString(16).padStart(64, '0')}`;
   if (String(tx.input).toLowerCase() !== expectedData) throw new Error('Deposit was not assigned to this campaign');
+  assertDonationEvent(receipt, { ledger:settings.ledger, wallet:settings.wallet, campaignId:intent.campaignId, amountWei:intent.receivedWei });
   for (const other of intents.values()) if (other.id !== intent.id && other.escrowTx === txHash) throw new Error('Deposit already credited');
   intent.status = 'escrowed';
   intent.escrowTx = txHash;
@@ -154,6 +158,9 @@ async function handle(req, res, client) {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
   try {
     if (req.method === 'GET' && url.pathname === '/health') return reply(res, 200, { ok: true, configured, database: database ? 'postgresql' : 'local-files', verification: Boolean(verification.apiKey), authentication: false });
+    if (req.method === 'GET' && url.pathname === '/api/testnet/config') return reply(res,200,testnet.config(trust));
+    if (req.method === 'POST' && url.pathname === '/api/testnet/prepare') return reply(res,200,await testnet.prepare(trust,JSON.parse(await bodyText(req))));
+    if (req.method === 'POST' && url.pathname === '/api/testnet/confirm') return reply(res,200,await testnet.confirm(trust,JSON.parse(await bodyText(req))));
     if (req.method === 'GET' && url.pathname === '/api/verification/config') return reply(res, 200, { configured: Boolean(verification.apiKey), model: verification.model });
     const analyzeMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/analyze$/.exec(url.pathname);
     if (req.method === 'POST' && analyzeMatch) {

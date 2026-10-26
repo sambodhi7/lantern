@@ -32,6 +32,14 @@ The original receipt is visible to Google's API during processing. Encryption pr
 
 ## Make the payment pipeline real
 
+### Present on public Sepolia without Onmeta
+
+Open `http://127.0.0.1:5173/#blockchain` in the Chrome profile where MetaMask is installed. Choose **Connect MetaMask**, then **Deploy on Sepolia** and review the deployment in MetaMask. After confirmation, choose **Create campaign** and approve that transaction. Finally send a small test donation such as `0.001` Sepolia ETH. The page links to each transaction on Sepolia Etherscan. Test tokens have no monetary value and do not increase the INR fundraising figure.
+
+All signatures stay inside MetaMask. The backend verifies contract deployment calldata, the campaign creation event, and the donation event using its own Sepolia RPC. The verified deployment and test donation trail persist in PostgreSQL. Pending transaction references survive browser refreshes, and **Check confirmation** recovers a delayed result without resending the transaction. **Reset scenario** preserves the public contract link. Override the public RPC using `SEPOLIA_RPC_URL` if needed.
+
+This screen currently covers deployment, campaign creation, and donations. Expense allocation, provider authorization, payout and escrow-hold actions remain in the existing contract demo; they are not yet controls on the public testnet page.
+
 The current fiat provider adapter is Onmeta. Razorpay alone does not convert rupees to crypto. You need an Onmeta partner account with explicit approval for this donation flow, its API key and API secret, a supported native ETH network, and a receiving wallet you control. Start in staging. Provider account creation, KYC and production approval require you.
 
 1. Obtain partner access from the [Onmeta staging dashboard](https://stg.dashboard.onmeta.in/). Ask which native ETH networks and donation use cases are enabled for your account. This adapter verifies native ETH transfers; it does not accept ERC-20 transfers or internal contract ETH transfers.
@@ -58,3 +66,5 @@ npm run build
 ```
 
 The test suite checks live PostgreSQL locking and rollback, duplicate holds, exactly-once settlement, encryption authentication, pixel replacement and withholding unsafe images. The live Gemini smoke command sends a generated synthetic receipt; it does not upload private user records.
+
+For the full payment protocol demonstration, run `npm run payment:demo` after starting PostgreSQL. It deploys the actual Solidity contract on a local Hardhat blockchain, uses a simulated provider callback, enforces confirmation depth, deposits into escrow, and verifies the resulting PostgreSQL credit. Its isolated database schema is removed afterward. The result is written to `bridge/.data/payment-chain-demo.json`. This demonstrates the protocol with local test funds; it does not perform an INR purchase.

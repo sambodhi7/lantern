@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { VerificationService, seal } from './verification.mjs';
+import { donationTopic, assertDonationEvent } from './chain.mjs';
 
 const temp = mkdtempSync(join(tmpdir(), 'lantern-bridge-test-'));
 const ledger = '0x2222222222222222222222222222222222222222';
@@ -22,7 +23,7 @@ const rpcServer = createServer(async (req, res) => {
   const result = method === 'eth_chainId' ? '0x1'
     : method === 'eth_blockNumber' ? '0x4'
     : method === 'eth_getTransactionByHash' && known ? (params[0] === `0x${'b'.repeat(64)}` ? tx : { ...tx, to: process.env.ONMETA_TREASURY_ADDRESS })
-    : method === 'eth_getTransactionReceipt' && known ? { status: '0x1', blockNumber: '0x1' }
+    : method === 'eth_getTransactionReceipt' && known ? { status: '0x1', blockNumber: '0x1', logs: [{ address:ledger, topics:[donationTopic,`0x${1n.toString(16).padStart(64,'0')}`,`0x${process.env.ONMETA_TREASURY_ADDRESS.slice(2).padStart(64,'0')}`],data:`0x${2000000000000000n.toString(16).padStart(64,'0')}` }] }
     : null;
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result }));
@@ -44,6 +45,15 @@ const post = async (path, data, signature = '') => fetch(`${base}${path}`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', 'x-onmeta-signature': signature },
   body: JSON.stringify(data),
+});
+
+test('a successful transaction without the matching campaign event is not escrow evidence',()=>{
+  const expected={ledger,wallet:process.env.ONMETA_TREASURY_ADDRESS,campaignId:1,amountWei:'2000000000000000'};
+  assert.throws(()=>assertDonationEvent({status:'0x1',logs:[]},expected),/matching donation event/);
+  const log={address:ledger,topics:[donationTopic,`0x${1n.toString(16).padStart(64,'0')}`,`0x${process.env.ONMETA_TREASURY_ADDRESS.slice(2).padStart(64,'0')}`],data:`0x${2000000000000000n.toString(16).padStart(64,'0')}`};
+  assert.doesNotThrow(()=>assertDonationEvent({logs:[log]},expected));
+  assert.throws(()=>assertDonationEvent({logs:[{...log,address:process.env.ONMETA_TREASURY_ADDRESS}]},expected),/matching donation event/);
+  assert.throws(()=>assertDonationEvent({logs:[log]},{...expected,campaignId:2}),/matching donation event/);
 });
 test.after(async () => {
   await new Promise(resolve => server.close(resolve));
