@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { enableDonorReviews } from './wallet';
+import {campaignPath,selectedCampaign} from './trust';
 
 type Action='deploy'|'create'|'donate';
 type Config={chainId:number;chainName:string;explorer:string;contract:string|null;owner?:string;campaignId:string|null;deploymentTx?:string;campaignTx?:string;donations:{transaction:string;testEth:string;from:string;createdAt:string}[]};
 type Pending={action:Action;txHash:string;wallet:string};
-const pendingKey='lantern-sepolia-pending';
 async function api<T>(path:string,body?:unknown):Promise<T>{
-  const response=await fetch('/api/testnet/'+path,{...(body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{}),cache:'no-store'});
+  const response=await fetch(campaignPath('/api/testnet/'+path),{...(body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{}),cache:'no-store'});
   const result=await response.json();if(!response.ok)throw new Error(result.error || 'The blockchain service is unavailable.');return result;
 }
 
 export default function BlockchainPanel(){
+  const pendingKey='lantern-sepolia-pending'+(selectedCampaign()?':'+selectedCampaign():'');
   const [config,setConfig]=useState<Config|null>(null);
   const [wallet,setWallet]=useState('');
   const [busy,setBusy]=useState(false);

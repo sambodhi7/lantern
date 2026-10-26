@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { submitTrustProof, type TrustNgo, type TrustProof } from './trust';
+import { submitTrustProof,campaignPath,selectedCampaign, type TrustNgo, type TrustProof } from './trust';
 
 export function VerificationNote({ proof }: { proof: TrustProof }) {
   const verification=proof.verification;
   if(!verification) return null;
-  return <details className="verification-note"><summary>{verification.status === 'checks_passed' ? 'AI consistency checks passed' : 'AI flagged this receipt for review'}</summary><p>Receipt total {verification.checks.amountMatches ? 'matches the claim' : 'needs review'}. Campaign purpose {verification.checks.categoryMatches ? 'matches' : 'needs review'}. {verification.privacy === 'image_withheld' ? 'Photo withheld for privacy.' : 'Private details masked; uploader reviewed the preview.'}</p><small>{verification.limitation}</small></details>;
+  return <>{verification.status!=='checks_passed'&&<p className="receipt-review-warning">{!verification.checks.amountMatches?'The submitted amount does not match the receipt total. ':''}{!verification.checks.categoryMatches?'The spending purpose needs review. ':''}You can review this receipt, but unresolved checks prevent a trust increase.</p>}<details className="verification-note"><summary>{verification.status === 'checks_passed' ? 'AI consistency checks passed' : 'AI flagged this receipt for review'}</summary><p>Receipt total {verification.checks.amountMatches ? 'matches the claim' : 'needs review'}. Campaign purpose {verification.checks.categoryMatches ? 'matches' : 'needs review'}. {verification.privacy === 'image_withheld' ? 'Photo withheld for privacy.' : 'Private details masked; uploader reviewed the preview.'}</p><small>{verification.limitation}</small></details></>;
 }
 
 type Analysis = { id: string; amountInr: number; publicImage: string; privacy: string; status: string; title: string; summary: string; checks: { amountMatches: boolean; categoryMatches: boolean; readable: boolean; suspicious: boolean; identityPresent: boolean }; limitation: string };
-function savedDraft():Analysis|null{try{const value=JSON.parse(localStorage.getItem('lantern-evidence-draft')||'null');return value?.id && value.checks && value.amountInr?value:null;}catch{return null;}}
+const draftKey=()=>`lantern-evidence-draft${selectedCampaign()?':'+selectedCampaign():''}`;
+function savedDraft():Analysis|null{try{const value=JSON.parse(localStorage.getItem(draftKey())||'null');return value?.id && value.checks && value.amountInr?value:null;}catch{return null;}}
 export default function ReceiptVerifier({ onPublished }: { onPublished: (state: TrustNgo) => void }) {
   const [configured, setConfigured] = useState(false);
   const [amount, setAmount] = useState(()=>String(savedDraft()?.amountInr||''));
@@ -19,7 +20,7 @@ export default function ReceiptVerifier({ onPublished }: { onPublished: (state: 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   useEffect(() => { void fetch('/api/verification/config').then(r => r.json()).then(c => setConfigured(c.configured === true)).catch(() => undefined); }, []);
-  useEffect(()=>{if(analysis)localStorage.setItem('lantern-evidence-draft',JSON.stringify(analysis));else localStorage.removeItem('lantern-evidence-draft');},[analysis]);
+  useEffect(()=>{if(analysis)localStorage.setItem(draftKey(),JSON.stringify(analysis));else localStorage.removeItem(draftKey());},[analysis]);
   async function useSample(){try{const response=await fetch('/api/verification/sample');if(!response.ok)throw new Error('Could not load the sample receipt.');const data=await response.json();setImage(data.image);setAmount(String(data.amountInr));setFileName('Synthetic sample receipt');setAnalysis(null);setReviewed(false);setMessage('Sample loaded. Press Analyze and redact to process it with Gemini.');}catch(error){setMessage(error instanceof Error?error.message:'Could not load sample.');}}
   async function selectFile(file?: File) {
     if (!file) return;
@@ -32,7 +33,7 @@ export default function ReceiptVerifier({ onPublished }: { onPublished: (state: 
   async function analyze() {
     setBusy(true); setMessage('Gemini is extracting receipt fields and covering private details…');
     try {
-      const response = await fetch('/api/trust/ngos/harbor-hands/analyze', { method: 'POST', headers: { 'content-type':'application/json' }, body: JSON.stringify({ image, amountInr: Number(amount) }) });
+      const response = await fetch(campaignPath('/api/trust/ngos/harbor-hands/analyze'), { method: 'POST', headers: { 'content-type':'application/json' }, body: JSON.stringify({ image, amountInr: Number(amount) }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Receipt analysis failed.');
       setAnalysis(body); setReviewed(false); setMessage('Review the redacted preview. The original is stored encrypted.');
@@ -46,6 +47,7 @@ export default function ReceiptVerifier({ onPublished }: { onPublished: (state: 
       const result = await submitTrustProof({ vendor: '', invoice: '', amountInr: analysis.amountInr, title: '', summary: '', documentHash: '', evidenceId: analysis.id, privacyReviewed: true, recordPayment:true });
       if (result.duplicate) { onPublished(result.state); setMessage('Duplicate receipt detected. Further local spending is paused.'); return; }
       setImage(''); setFileName(''); setAnalysis(null); setReviewed(false);
+      localStorage.removeItem(draftKey());
       onPublished(result.state);
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not publish this receipt.'); }
     finally { setBusy(false); }

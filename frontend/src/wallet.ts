@@ -1,6 +1,7 @@
-export const donorTokenKey='lantern-demo-donor-token';
+import {campaignPath} from './trust';
+export const donorTokenKey='lantern-wallet-donor-token';
 export async function testnetApi<T>(path:string,body?:unknown):Promise<T>{
-  const response=await fetch('/api/testnet/'+path,{...(body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{}),cache:'no-store'});
+  const response=await fetch(campaignPath('/api/testnet/'+path),{...(body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{}),cache:'no-store'});
   const result=await response.json();
   if(!response.ok)throw Object.assign(new Error(result.error || 'Blockchain service unavailable.'),{status:response.status});
   return result;
@@ -15,7 +16,9 @@ export async function connectSepolia(){
   return accounts[0];
 }
 export async function enableDonorReviews(){
-  const wallet=await connectSepolia();
+  if(!window.ethereum)throw new Error('Reviewing is free. Open this campaign in Chrome with MetaMask and use the wallet that donated.');
+  const accounts=await window.ethereum.request({method:'eth_requestAccounts'}) as string[];
+  const wallet=accounts[0];if(!wallet)throw new Error('Choose the wallet that made the donation.');
   const challenge=await testnetApi<{id:string;message:string}>('voter/challenge',{wallet});
   const hex='0x'+Array.from(new TextEncoder().encode(challenge.message)).map(byte=>byte.toString(16).padStart(2,'0')).join('');
   const signature=await window.ethereum!.request({method:'personal_sign',params:[hex,wallet]});

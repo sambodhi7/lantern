@@ -61,6 +61,30 @@ test.after(async () => {
   if (dirname(resolve(temp)) === resolve(tmpdir())) rmSync(temp, { recursive: true, force: true });
 });
 
+test('campaign creation and HTTP selection keep donations scoped and reject unknown campaigns',async()=>{
+  const initial=await(await fetch(`${base}/api/trust/ngos/harbor-hands`)).json();
+  const created=await(await post('/api/trust/ngos/harbor-hands/campaigns',{name:'Community school supplies',story:'Provide learning materials to the students in our village primary school.',category:'Education',targetInr:25000})).json();
+  assert.equal(created.campaign.fundraising.raisedInr,0);
+  const selection=`?campaign=${created.campaign.id}`;
+  const donation=await post('/api/trust/demo-donations'+selection,{amountInr:1000});
+  assert.equal(donation.status,201);
+  const selected=await(await fetch(`${base}/api/trust/ngos/harbor-hands${selection}`)).json();
+  assert.equal(selected.campaign.fundraising.raisedInr,1000);
+  assert.equal(selected.campaign.category,'Education');
+  assert.equal(selected.proofs.length,0);
+  const unchanged=await(await fetch(`${base}/api/trust/ngos/harbor-hands`)).json();
+  assert.equal(unchanged.campaign.fundraising.raisedInr,initial.campaign.fundraising.raisedInr);
+  const campaigns=await(await fetch(`${base}/api/trust/ngos/harbor-hands/campaigns`)).json();
+  const summary=campaigns.find(item=>item.id===created.campaign.id);
+  assert.equal(summary.status,'open');
+  assert.equal(summary.raisedInr,1000);
+  assert.equal(summary.story,created.campaign.fundraising.story);
+  assert.equal(summary.proofCount,0);
+  assert.equal(summary.ngoName,'Harbor Hands Initiative');
+  assert.equal((await fetch(`${base}/api/trust/ngos/harbor-hands?campaign=missing`)).status,404);
+  assert.equal((await post('/api/trust/ngos/harbor-hands/campaigns',{name:'short',targetInr:-1})).status,400);
+});
+
 test('converted funds only become protected after an independently checked campaign deposit', async () => {
   const intent = await (await post('/api/onramp/intents', { amountInr: 1000 })).json();
   const order = {

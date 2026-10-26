@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1450" viewBox="0 0 1100 1450">
+  <rect width="1100" height="1450" fill="#fffdf7"/>
+  <g font-family="Arial, sans-serif" fill="#222">
+    <rect x="60" y="50" width="980" height="62" fill="#ededdf"/>
+    <text x="85" y="90" font-size="24" font-weight="bold">SYNTHETIC DEMO RECEIPT — NOT VALID FOR PAYMENT</text>
+    <text x="70" y="185" font-size="40" font-weight="bold">DEMO FURNITURE SUPPLIES</text>
+    <text x="70" y="230" font-size="23">12 Sample Lane, Demo Town — fictional address</text>
+    <text x="70" y="270" font-size="23">Email: supplier@example.invalid</text>
+    <text x="70" y="310" font-size="23">Phone: 9990001234 (fictional demo number)</text>
+    <path d="M70 350H1030" stroke="#333" stroke-width="2"/>
+    <text x="70" y="405" font-size="25">Invoice number: DEMO-TABLES-004</text>
+    <text x="70" y="450" font-size="25">Date: 26 October 2026</text>
+    <text x="70" y="525" font-size="25" font-weight="bold">BILL TO</text>
+    <text x="70" y="570" font-size="25">Customer: Asha Example (fictional person)</text>
+    <text x="70" y="615" font-size="25">Email: customer@example.invalid</text>
+    <text x="70" y="660" font-size="25">Phone: 9990005678 (fictional demo number)</text>
+    <text x="70" y="705" font-size="25">Delivery: 24 Example Street, Demo Village</text>
+    <rect x="70" y="760" width="960" height="58" fill="#ededdf"/>
+    <g font-size="23" font-weight="bold">
+      <text x="90" y="798">Description</text><text x="590" y="798">Qty</text>
+      <text x="700" y="798">Rate (INR)</text><text x="880" y="798">Total (INR)</text>
+    </g>
+    <g font-size="25">
+      <text x="90" y="870">Dining tables for community dining area</text>
+      <text x="600" y="870">4</text><text x="730" y="870">2,500</text><text x="905" y="870">10,000</text>
+    </g>
+    <path d="M70 905H1030" stroke="#777"/>
+    <text x="680" y="960" font-size="25">Subtotal: INR 10,000</text>
+    <text x="680" y="1005" font-size="25">Additional charges: INR 0</text>
+    <text x="550" y="1070" font-size="37" font-weight="bold">TOTAL: INR 10,000</text>
+    <path d="M70 1110H1030" stroke="#333" stroke-width="2"/>
+    <text x="70" y="1170" font-size="24">Payment reference: DEMO-PAYMENT-0004</text>
+    <text x="70" y="1215" font-size="24">Account reference: DEMO-ACCOUNT-0001</text>
+    <text x="70" y="1300" font-size="22">All people, contact details and transactions shown here are fictional.</text>
+    <text x="70" y="1340" font-size="22">For receipt extraction and privacy-redaction testing only.</text>
+    <text x="70" y="1380" font-size="22">This document does not establish a purchase, payment or delivery.</text>
+  </g>
+</svg>

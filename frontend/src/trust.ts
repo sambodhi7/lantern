@@ -20,10 +20,12 @@ export type TrustNgo = {
 };
 
 const base = '/api/trust';
+export const selectedCampaign=()=>new URLSearchParams(window.location.search).get('campaign')||'';
+export const campaignPath=(path:string)=>path+(selectedCampaign()?`${path.includes('?')?'&':'?'}campaign=${encodeURIComponent(selectedCampaign())}`:'');
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(base + path, { ...options, headers: { 'content-type': 'application/json', ...options?.headers }, cache: 'no-store' });
+  const response = await fetch(base + campaignPath(path), { ...options, headers: { 'content-type': 'application/json', ...options?.headers }, cache: 'no-store' });
   const data = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(data.error || 'Trust engine is unavailable.');
+  if (!response.ok) throw Object.assign(new Error(data.error || 'Trust engine is unavailable.'),{status:response.status});
   return data;
 }
 const json = (body: unknown, token?: string): RequestInit => ({ method: 'POST', body: JSON.stringify(body), headers: token ? { authorization: `Bearer ${token}` } : undefined });
@@ -35,3 +37,6 @@ export const submitTrustProof = (input: { vendor: string; invoice: string; amoun
 export const voteProof = (proofId: string, support: boolean, token: string) => request<TrustNgo>(`/ngos/harbor-hands/proofs/${encodeURIComponent(proofId)}/votes`, json({ support }, token));
 export const runTrustAttack = () => request<{ duplicate: boolean; state: TrustNgo }>('/ngos/harbor-hands/demo-attack', json({}));
 export const resetTrust = () => request<TrustNgo>('/demo/reset', json({}));
+export type CampaignSummary={id:string;name:string;category:string;targetInr:number;raisedInr:number;story:string;status:string;ngoName:string;country:string;score:number;proofCount:number;blockchain:TrustNgo['blockchain']};
+export const listCampaigns=()=>request<CampaignSummary[]>('/ngos/harbor-hands/campaigns');
+export const createCampaign=(input:{name:string;story:string;category:string;targetInr:number})=>request<TrustNgo>('/ngos/harbor-hands/campaigns',json(input));

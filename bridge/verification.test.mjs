@@ -7,6 +7,22 @@ import { tmpdir } from 'node:os';
 import sharp from 'sharp';
 import { seal, unseal, VerificationService, validateAnalysis, redactImage } from './verification.mjs';
 
+test('temporary Gemini outages retry within a bound; credential failures do not retry',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'lantern-retry-'));
+  try{
+    let calls=0;
+    const service=new VerificationService({dataDir:dir,apiKey:'test',retryDelayMs:0,fetcher:async()=>++calls<3?{ok:false,status:503}:{ok:true,json:async()=>({candidates:[{content:{parts:[{text:'{"safe":true}'}]}}]})}});
+    assert.deepEqual(await service.generate('test',Buffer.from('image'),{}),{safe:true});
+    assert.equal(calls,3);
+    calls=0;service.fetcher=async()=>{calls++;return {ok:false,status:401};};
+    await assert.rejects(()=>service.generate('test',Buffer.from('image'),{}),/401/);
+    assert.equal(calls,1);
+    calls=0;service.fetcher=async()=>{calls++;return {ok:false,status:503};};
+    await assert.rejects(()=>service.generate('test',Buffer.from('image'),{}),/503/);
+    assert.equal(calls,3);
+  }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
 test('AES encryption rejects tampering and masks replace underlying pixels', async () => {
   const key = randomBytes(32), encrypted = seal('private beneficiary',key);
   assert.equal(unseal(encrypted,key).toString(),'private beneficiary');

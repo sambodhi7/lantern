@@ -16,6 +16,29 @@ The first PostgreSQL initialization imports existing local trust data when prese
 
 ## Receipt verification and privacy
 
+### Presentation flow
+
+Receipt review buttons never open donation checkout. Existing verified donors submit reviews directly; missing or expired review access prompts only wallet account access and a free ownership signature, without network switching or an ETH transaction. A wallet with no contribution is told to switch to its donor wallet. Regression check: `cd frontend; node --test scripts/review-wallet.test.mjs`.
+
+The home page `/` lists active campaigns. Each card links to its own `?campaign=...` public page with donations, proof reviews, money trail and trust history. The logo and **All campaigns** return to the directory. Campaign descriptions, funding totals, trust scores and receipt counts are loaded from the backend; closed funding requests are excluded.
+
+Use **For NGOs → + Create new campaign** to publish another funding request. Choose a name, goal, purpose and description. Then choose **Activate this campaign on Sepolia** and approve the one-time creation transaction in MetaMask. This creates a separate campaign ID in the existing deployed contract; a new contract deployment is unnecessary. The backend verifies the creation calldata, sender, purpose and emitted ID before binding that ID to the funding request. A creation transaction cannot be reused for a second request.
+
+Every campaign now uses MetaMask ETH donations. The simulated INR donation control has been removed from the public UI. Home cards and campaign totals show confirmed Sepolia test ETH, with INR project budgets separately labeled. Test ETH is valueless; these are real public-chain transactions with test assets, not real INR payments. Existing synthetic accounting entries remain labeled in the historical demo ledger.
+
+The selector switches between requests and keeps the selected campaign in the URL. Donations, receipts and voting rights remain scoped to each campaign; receipt duplication is checked globally. Confirmation validates the exact campaign ID and matching donation event, so a transfer to one campaign cannot fund another. Pending transaction references are stored per campaign. Additional on-chain campaign records disable destructive demo resets so escrow links cannot be discarded.
+
+Open `http://127.0.0.1:5173/` in Chrome with MetaMask. The public campaign shows the saved Sepolia contract and confirmed test donations, alongside a separately labeled INR demonstration ledger.
+
+1. **Support this project** opens the MetaMask testnet donation dialog. If needed, activate the selected campaign first. Existing donors can choose **Already donated? Enable receipt reviews**, sign a free ownership message, and review without another transfer. The backend checks their actual contract contribution to that specific campaign before issuing voting access. One wallet has one review per receipt even after renewing its session.
+2. **For NGOs → Edit funding request** changes the public campaign request. Under receipt verification, upload an image or use the synthetic sample, enter its claimed rupee amount, then analyze it with Gemini.
+3. Review the redacted preview and publish. Recording the declared expense and publishing its proof happen together. Retrying publication of the same evidence ID returns the saved proof without reserving more allowance.
+4. Donors see the safe image, consistency assessment, amount and fingerprint. Three reviews close the receipt; at least 70% support raises trust by four points. A rejected receipt lowers it by six. Simulated donor reviews are labeled separately from verified wallet reviews. This is a small demo quorum, not a Sybil-resistant governance mechanism.
+5. Approved expense amounts clear outstanding declared spending. The allowance is campaign funds × (5% + score × 0.15%); available spending is capped by both remaining funds and allowance minus outstanding expenses. These are backend accounting records, not bank transfers.
+6. Reusing an invoice identity or original file hash under a new evidence submission creates a hold and lowers trust by 12 once. The hold makes available backend spending zero. It does not send a freeze transaction to the Sepolia contract.
+
+The sample is fictional and labeled as such. Gemini can flag an uncertain sample or withhold its photo; the application preserves that assessment. The **Reset demo records** control preserves the existing public Sepolia deployment and transactions.
+
 Choose **For NGOs**. In **Receipt verification**, enter the claimed INR amount, choose a receipt image and press **Analyze and redact**. The backend:
 
 1. Hashes the original bytes for duplicate detection.
@@ -61,10 +84,13 @@ Official integration references: [Onmeta widget creation](https://docs.onmeta.in
 $env:TEST_DATABASE_URL='postgresql://lantern@127.0.0.1:55432/lantern'
 npm run bridge:test
 node scripts/verify-gemini.mjs
+node scripts/journey-smoke.mjs
 cd frontend
 npm run build
 ```
 
 The test suite checks live PostgreSQL locking and rollback, duplicate holds, exactly-once settlement, encryption authentication, pixel replacement and withholding unsafe images. The live Gemini smoke command sends a generated synthetic receipt; it does not upload private user records.
+
+`journey-smoke.mjs` additionally exercises live Gemini analysis, encrypted PostgreSQL publication, safe retries, donor reviews, score changes and duplicate holds through HTTP. It creates and removes its own isolated database schema and leaves the presentation ledger untouched. Its synthetic donor sessions test the review workflow; wallet ownership verification is covered separately against actual local contract execution in `bridge/testnet.test.mjs`.
 
 For the full payment protocol demonstration, run `npm run payment:demo` after starting PostgreSQL. It deploys the actual Solidity contract on a local Hardhat blockchain, uses a simulated provider callback, enforces confirmation depth, deposits into escrow, and verifies the resulting PostgreSQL credit. Its isolated database schema is removed afterward. The result is written to `bridge/.data/payment-chain-demo.json`. This demonstrates the protocol with local test funds; it does not perform an INR purchase.

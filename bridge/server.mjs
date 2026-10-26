@@ -156,26 +156,35 @@ async function applyCompletedOrder(event) {
 
 async function handle(req, res, client) {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
+  const campaignId=url.searchParams.get('campaign')||undefined;
   try {
     if (req.method === 'GET' && url.pathname === '/health') return reply(res, 200, { ok: true, configured, database: database ? 'postgresql' : 'local-files', verification: Boolean(verification.apiKey), authentication: false });
-    if (req.method === 'GET' && url.pathname === '/api/testnet/config') return reply(res,200,testnet.config(trust));
-    if (req.method === 'POST' && url.pathname === '/api/testnet/prepare') return reply(res,200,await testnet.prepare(trust,JSON.parse(await bodyText(req))));
-    if (req.method === 'POST' && url.pathname === '/api/testnet/confirm') return reply(res,200,await testnet.confirm(trust,JSON.parse(await bodyText(req))));
-    if (req.method === 'POST' && url.pathname === '/api/testnet/voter/challenge') return reply(res,200,await testnet.voterChallenge(trust,JSON.parse(await bodyText(req))));
+    if (req.method === 'GET' && url.pathname === '/api/testnet/config') return reply(res,200,testnet.config(trust,campaignId));
+    if (req.method === 'POST' && url.pathname === '/api/testnet/prepare') return reply(res,200,await testnet.prepare(trust,{...JSON.parse(await bodyText(req)),localCampaignId:campaignId}));
+    if (req.method === 'POST' && url.pathname === '/api/testnet/confirm') return reply(res,200,await testnet.confirm(trust,{...JSON.parse(await bodyText(req)),localCampaignId:campaignId}));
+    if (req.method === 'POST' && url.pathname === '/api/testnet/voter/challenge') return reply(res,200,await testnet.voterChallenge(trust,{...JSON.parse(await bodyText(req)),localCampaignId:campaignId}));
     if (req.method === 'POST' && url.pathname === '/api/testnet/voter/session') return reply(res,200,await testnet.voterSession(trust,JSON.parse(await bodyText(req))));
     if (req.method === 'GET' && url.pathname === '/api/verification/config') return reply(res, 200, { configured: Boolean(verification.apiKey), model: verification.model });
     if (req.method === 'GET' && url.pathname === '/api/verification/sample') return reply(res,200,{image:`data:image/png;base64,${(await sampleReceipt()).toString('base64')}`,amountInr:500});
     const analyzeMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/analyze$/.exec(url.pathname);
     if (req.method === 'POST' && analyzeMatch) {
-      const ngo = trust.ngo(analyzeMatch[1]);
+      // Read the latest campaign without holding the accounting lock during AI calls.
+      const analysisTrust=database?new TrustStore(null):trust;
+      if(database){const {rows}=await database.pool.query('SELECT trust FROM lantern_state WHERE id=1');analysisTrust.data=rows[0].trust;}
+      const ngo = analysisTrust.ngo(analyzeMatch[1]);
       const input = JSON.parse(await bodyText(req));
-      return reply(res, 200, await verification.analyze(ngo.id, { ...input, category: trust.campaign(ngo).category }, client));
+      const campaign=analysisTrust.campaign(ngo,campaignId);
+      return reply(res, 200, await verification.analyze(ngo.id, { ...input, category: campaign.category,campaignId:campaign.id }, client));
     }
     if (req.method === 'GET' && url.pathname === '/api/trust/ngos') return reply(res, 200, trust.list());
     if (req.method === 'POST' && url.pathname === '/api/trust/ngos') return reply(res, 201, trust.register(JSON.parse(await bodyText(req))));
+    const campaignsMatch=/^\/api\/trust\/ngos\/([a-z0-9-]+)\/campaigns$/.exec(url.pathname);
+    if(campaignsMatch && req.method==='GET'){const ngo=trust.ngo(campaignsMatch[1]);return reply(res,200,ngo.campaigns.map(c=>({id:c.id,name:c.name,category:c.category,targetInr:c.fundraising.targetInr,raisedInr:c.fundraising.raisedInr,story:c.fundraising.story,status:c.fundraising.status,ngoName:ngo.name,country:ngo.country,score:c.score,proofCount:c.proofs.length,blockchain:trust.get(ngo.id,undefined,c.id).blockchain})));}
+    if(campaignsMatch && req.method==='POST')return reply(res,201,trust.createCampaign(campaignsMatch[1],JSON.parse(await bodyText(req))));
     if (req.method === 'POST' && url.pathname === '/api/trust/demo-donations') {
+      if(process.env.NODE_ENV!=='test')return reply(res,403,{error:'Simulated donations are disabled. Donate through the campaign smart contract with MetaMask.'});
       const body = JSON.parse(await bodyText(req));
-      return reply(res, 201, trust.donor(Number(body.amountInr), String(body.ngoId || 'harbor-hands')));
+      return reply(res, 201, trust.donor(Number(body.amountInr), String(body.ngoId || 'harbor-hands'),campaignId));
     }
     if (req.method === 'POST' && url.pathname === '/api/trust/demo/reset') return reply(res, 200, trust.reset());
     const ngoMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)$/.exec(url.pathname);
@@ -183,12 +192,12 @@ async function handle(req, res, client) {
       const token = String(req.headers.authorization || '').replace(/^Bearer /i, '');
       let donorId;
       if (token) { try { donorId = trust.findDonor(token).id; } catch { /* public view */ } }
-      return reply(res, 200, trust.get(ngoMatch[1], donorId));
+      return reply(res, 200, trust.get(ngoMatch[1], donorId,campaignId));
     }
     const advanceMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/advances$/.exec(url.pathname);
-    if (req.method === 'POST' && advanceMatch) return reply(res, 201, trust.advance(advanceMatch[1], JSON.parse(await bodyText(req))));
+    if (req.method === 'POST' && advanceMatch) return reply(res, 201, trust.advance(advanceMatch[1], JSON.parse(await bodyText(req)),campaignId));
     const requestMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/request$/.exec(url.pathname);
-    if (req.method === 'POST' && requestMatch) return reply(res, 200, trust.requestFunding(requestMatch[1], JSON.parse(await bodyText(req))));
+    if (req.method === 'POST' && requestMatch) return reply(res, 200, trust.requestFunding(requestMatch[1], JSON.parse(await bodyText(req)),campaignId));
     const proofMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/proofs$/.exec(url.pathname);
     if (req.method === 'POST' && proofMatch) {
       let input = JSON.parse(await bodyText(req));
@@ -197,14 +206,18 @@ async function handle(req, res, client) {
       if (input.evidenceId) {
         if (input.privacyReviewed !== true) return reply(res, 400, { error: 'Review the redacted preview before publication.' });
         const record = await verification.load(input.evidenceId, proofMatch[1], client);
-        return reply(res,201,trust.publishVerified(proofMatch[1],input,record));
+        return reply(res,201,trust.publishVerified(proofMatch[1],input,record,campaignId));
       }
-      return reply(res, 201, trust.proof(proofMatch[1], input));
+      return reply(res, 201, trust.proof(proofMatch[1], input,campaignId));
     }
     const attackMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/demo-attack$/.exec(url.pathname);
     if (req.method === 'POST' && attackMatch) return reply(res, 200, trust.demoAttack(attackMatch[1]));
     const voteMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/proofs\/([a-z0-9-]+)\/votes$/.exec(url.pathname);
-    if (req.method === 'POST' && voteMatch) return reply(res, 200, trust.vote(voteMatch[1], voteMatch[2], String(req.headers.authorization || '').replace(/^Bearer /i, ''), JSON.parse(await bodyText(req)).support));
+    if (req.method === 'POST' && voteMatch) {
+      const token=String(req.headers.authorization || '').replace(/^Bearer /i,'');
+      if(process.env.NODE_ENV!=='test' && trust.findDonor(token).demo)return reply(res,403,{error:'Only verified blockchain donors can review receipts. Enable reviews with your donor wallet.'});
+      return reply(res,200,trust.vote(voteMatch[1],voteMatch[2],token,JSON.parse(await bodyText(req)).support,campaignId));
+    }
     if (req.method === 'GET' && url.pathname === '/api/onramp/config') return reply(res, 200, {
       configured, environment: settings.environment, apiKey: configured ? settings.key : null,
       walletAddress: configured ? settings.wallet : null, chainId: settings.chainId,
@@ -250,7 +263,7 @@ let pending = Promise.resolve();
 export const server = createServer((req, res) => {
   // AI processing does not need the ledger lock. Its single encrypted evidence
   // INSERT is atomic; donors can keep reading and donating during model calls.
-  if (req.method === 'POST' && /^\/api\/trust\/ngos\/[a-z0-9-]+\/analyze$/.test(req.url || '')) {
+  if (req.method === 'POST' && /^\/api\/trust\/ngos\/[a-z0-9-]+\/analyze(?:\?|$)/.test(req.url || '')) {
     void handle(req, res, database?.pool || null);
     return;
   }

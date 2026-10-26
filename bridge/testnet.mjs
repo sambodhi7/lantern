@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { encodeDeployData, encodeFunctionData, decodeEventLog, decodeFunctionResult, parseEther, formatEther, stringToHex, verifyMessage } from 'viem';
+import { encodeDeployData, encodeFunctionData, decodeEventLog, decodeFunctionResult, parseEther, formatEther, stringToHex, verifyMessage,keccak256 } from 'viem';
 import { randomUUID } from 'node:crypto';
 import { assertDonationEvent } from './chain.mjs';
 
@@ -18,11 +18,16 @@ export class TestnetService {
     if(!response.ok)fail(503,'Sepolia RPC is unavailable. Your pending transaction is saved; retry verification shortly.');
     const data=await response.json();if(data.error)fail(502,'Sepolia could not verify the transaction. Retry shortly.');return data.result;
   }
-  config(trust) {
-    return {chainId:this.chainId,chainName:'Ethereum Sepolia',explorer:'https://sepolia.etherscan.io',testnet:true,...(trust.data.testnet || {contract:null,campaignId:null,donations:[]})};
+  state(trust,localCampaignId){
+    const ngo=trust.ngo('harbor-hands'),campaign=trust.campaign(ngo,localCampaignId);
+    return campaign.id===ngo.campaigns[0].id?trust.data.testnet:campaign.testnet || (trust.data.testnet?{contract:trust.data.testnet.contract,owner:trust.data.testnet.owner,deploymentTx:trust.data.testnet.deploymentTx,campaignId:null,donations:[]}:null);
+  }
+  purpose(trust,id){const category=trust.campaign(trust.ngo('harbor-hands'),id).category;return category==='Water infrastructure'?purpose:keccak256(stringToHex(category));}
+  config(trust,localCampaignId) {
+    return {chainId:this.chainId,chainName:'Ethereum Sepolia',explorer:'https://sepolia.etherscan.io',testnet:true,...(this.state(trust,localCampaignId) || {contract:null,campaignId:null,donations:[]})};
   }
   async voterChallenge(trust,input) {
-    const current=trust.data.testnet;
+    const current=this.state(trust,input.localCampaignId);
     if(!current?.campaignId || !walletPattern.test(input.wallet || ''))fail(400,'Connect a wallet and create a campaign first.');
     const wallet=input.wallet.toLowerCase();
     const chain=await this.rpc('eth_chainId');if(Number(BigInt(chain))!==this.chainId)fail(502,'The backend RPC is on the wrong network.');
@@ -34,7 +39,7 @@ export class TestnetService {
     trust.data.voterChallenges ||= {};
     for(const [key,value] of Object.entries(trust.data.voterChallenges))if(value.expiresAt<Date.now())delete trust.data.voterChallenges[key];
     if(Object.keys(trust.data.voterChallenges).length>=100)fail(429,'Too many pending wallet checks. Retry after a few minutes.');
-    trust.data.voterChallenges[id]={wallet,message,expiresAt};trust.save();return {id,message,expiresAt};
+    trust.data.voterChallenges[id]={wallet,message,expiresAt,localCampaignId:trust.campaign(trust.ngo('harbor-hands'),input.localCampaignId).id};trust.save();return {id,message,expiresAt};
   }
   async voterSession(trust,input) {
     const challenge=trust.data.voterChallenges?.[input.id];
@@ -42,11 +47,11 @@ export class TestnetService {
     let valid=false;try{valid=await verifyMessage({address:challenge.wallet,message:challenge.message,signature:input.signature});}catch{}
     if(!valid)fail(401,'Wallet signature does not match the donor address.');
     delete trust.data.voterChallenges[input.id];
-    return trust.walletDonor(challenge.wallet,this.chainId);
+    return trust.walletDonor(challenge.wallet,this.chainId,challenge.localCampaignId);
   }
   async prepare(trust,input) {
     if(!walletPattern.test(input.wallet || ''))fail(400,'Connect a valid Ethereum wallet first.');
-    const wallet=input.wallet.toLowerCase(), current=trust.data.testnet;
+    const wallet=input.wallet.toLowerCase(), current=this.state(trust,input.localCampaignId);
     const transaction={from:wallet,value:'0x0',chainId:`0x${this.chainId.toString(16)}`};
     if(input.action==='deploy') {
       if(current?.contract)fail(409,'A contract is already deployed. Continue by creating or funding its campaign.');
@@ -54,9 +59,9 @@ export class TestnetService {
     }
     if(!current?.contract)fail(400,'Deploy the contract first.');
     if(input.action==='create') {
-      if(wallet!==current.owner)fail(400,'Connect the wallet that deployed this contract.');
+      if(!input.localCampaignId && wallet!==current.owner)fail(400,'Connect the wallet that deployed this contract.');
       if(current.campaignId)fail(409,'The campaign already exists.');
-      return {action:'create',chainId:this.chainId,transaction:{...transaction,to:current.contract,data:encodeFunctionData({abi:this.artifact.abi,functionName:'createCampaign',args:[purpose]})}};
+      return {action:'create',chainId:this.chainId,transaction:{...transaction,to:current.contract,data:encodeFunctionData({abi:this.artifact.abi,functionName:'createCampaign',args:[this.purpose(trust,input.localCampaignId)]})}};
     }
     if(input.action==='donate') {
       if(!current.campaignId)fail(400,'Create the campaign first.');
@@ -70,35 +75,39 @@ export class TestnetService {
   async confirm(trust,input) {
     if(!hashPattern.test(input.txHash || '') || !walletPattern.test(input.wallet || ''))fail(400,'Invalid transaction reference or wallet.');
     const txHash=input.txHash.toLowerCase(), wallet=input.wallet.toLowerCase();
-    const current=trust.data.testnet;
-    if(current && (current.deploymentTx===txHash || current.campaignTx===txHash || current.donations?.some(item=>item.transaction===txHash)))return this.config(trust);
+    const current=this.state(trust,input.localCampaignId);
+    if(current && ((input.action==='deploy' && current.deploymentTx===txHash) || (input.action==='create' && current.campaignTx===txHash) || (input.action==='donate' && current.donations?.some(item=>item.transaction===txHash))))return this.config(trust,input.localCampaignId);
     const [chain,tx,receipt]=await Promise.all([this.rpc('eth_chainId'),this.rpc('eth_getTransactionByHash',[txHash]),this.rpc('eth_getTransactionReceipt',[txHash])]);
     if(Number(BigInt(chain))!==this.chainId)fail(502,'The backend RPC is on the wrong network.');
     if(!tx || !receipt || !receipt.blockNumber)fail(409,'Transaction is pending. Retry verification once it confirms.');
     if(receipt.status!=='0x1')fail(422,'Transaction failed on-chain. Funds were not recorded.');
     if(String(tx.from).toLowerCase()!==wallet)fail(400,'Transaction sender does not match the connected wallet.');
     if(input.action==='deploy') {
-      const prepared=await this.prepare(trust,{action:'deploy',wallet});
+      const prepared=await this.prepare(trust,{...input,action:'deploy',wallet});
       if(tx.to || String(tx.input).toLowerCase()!==prepared.transaction.data.toLowerCase() || !walletPattern.test(receipt.contractAddress || ''))fail(400,'This transaction did not deploy the LANTERN contract with your wallet as owner.');
       const code=await this.rpc('eth_getCode',[receipt.contractAddress,'latest']);
       if(!code || code==='0x')fail(400,'No deployed contract code was found.');
       trust.data.testnet={contract:receipt.contractAddress.toLowerCase(),owner:wallet,deploymentTx:txHash,campaignId:null,donations:[]};
     } else if(input.action==='create') {
-      const prepared=await this.prepare(trust,{action:'create',wallet});
+      const prepared=await this.prepare(trust,{...input,action:'create',wallet});
+      const bindings=[trust.data.testnet,...trust.data.ngos.flatMap(ngo=>ngo.campaigns.map(campaign=>campaign.testnet))].filter(Boolean);
+      if(bindings.some(binding=>binding.campaignTx===txHash))fail(409,'This creation transaction already belongs to another campaign.');
       if(String(tx.to).toLowerCase()!==current.contract || String(tx.input).toLowerCase()!==prepared.transaction.data.toLowerCase())fail(400,'Transaction did not create the expected water campaign.');
       const event=this.event(receipt,current.contract,'CampaignCreated');
-      if(!event || event.args.ngo.toLowerCase()!==wallet || event.args.purpose!==purpose)fail(400,'The matching campaign event was not found.');
-      current.campaignId=event.args.campaignId.toString();current.campaignTx=txHash;
+      if(!event || event.args.ngo.toLowerCase()!==wallet || event.args.purpose!==this.purpose(trust,input.localCampaignId))fail(400,'The matching campaign event was not found.');
+      current.campaignId=event.args.campaignId.toString();current.campaignTx=txHash;current.ngoWallet=wallet;
+      const ngo=trust.ngo('harbor-hands'),local=trust.campaign(ngo,input.localCampaignId);
+      if(local.id!==ngo.campaigns[0].id)local.testnet=current;
     } else if(input.action==='donate') {
       if(!current?.campaignId || String(tx.to).toLowerCase()!==current.contract)fail(400,'Donation did not reach the campaign contract.');
       const data=encodeFunctionData({abi:this.artifact.abi,functionName:'donate',args:[BigInt(current.campaignId)]});
       if(String(tx.input).toLowerCase()!==data.toLowerCase() || BigInt(tx.value)<=0n)fail(400,'Transaction was not a donation to this campaign.');
       assertDonationEvent(receipt,{ledger:current.contract,wallet,campaignId:current.campaignId,amountWei:tx.value});
       current.donations.unshift({transaction:txHash,from:wallet,amountWei:BigInt(tx.value).toString(),testEth:formatEther(BigInt(tx.value)),createdAt:new Date().toISOString()});
-      const campaign=trust.campaign(trust.ngo('harbor-hands'));
+      const campaign=trust.campaign(trust.ngo('harbor-hands'),input.localCampaignId);
       campaign.events.unshift({id:txHash,type:'chain_donation',title:'Sepolia test donation confirmed',detail:'Test funds received by the public campaign escrow. No INR payment was made.',testEth:formatEther(BigInt(tx.value)),transaction:txHash,createdAt:new Date().toISOString(),demo:false});
     } else fail(400,'Unknown blockchain action.');
-    trust.save();return this.config(trust);
+    trust.save();return this.config(trust,input.localCampaignId);
   }
   event(receipt,address,name) {
     for(const log of receipt.logs || []) {
