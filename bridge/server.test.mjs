@@ -139,5 +139,10 @@ test('publishing an analyzed receipt uses server-owned fields and requires a pri
   assert.equal(result.proof.verification.model,'test-model');
   assert.equal(JSON.stringify(result).includes('Private Test Supplier'),false);
   const repeated=await (await post('/api/trust/ngos/harbor-hands/proofs',{...input,privacyReviewed:true})).json();
-  assert.equal(repeated.duplicate,true);
+  assert.equal(repeated.duplicate,false);
+  assert.equal(repeated.replayed,true,'retrying the same publication is idempotent');
+  const duplicateId=randomUUID();
+  writeFileSync(join(temp,'evidence',`${duplicateId}.json`),JSON.stringify({ngoId:'harbor-hands',analysis:seal(JSON.stringify({analysis,publicRecord:{...publicRecord,id:duplicateId}}),verifier.key).toString('base64')}));
+  const duplicate=await (await post('/api/trust/ngos/harbor-hands/proofs',{...input,evidenceId:duplicateId,privacyReviewed:true,recordPayment:true})).json();
+  assert.equal(duplicate.duplicate,true,'a new evidence item reusing an invoice creates a hold');
 });

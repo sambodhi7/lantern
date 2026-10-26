@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { formatEther } from 'viem';
 
 const clamp = value => Math.max(0, Math.min(100, value));
 const clean = value => String(value || '').trim().replace(/\s+/g, ' ');
@@ -66,22 +67,32 @@ export class TrustStore {
   ngo(id) { const ngo = this.data.ngos.find(item => item.id === id); if (!ngo) fail(404, 'NGO not found.'); return ngo; }
   campaign(ngo) { return ngo.campaigns[0]; }
   allowance(campaign) { return Math.floor(campaign.budgetInr * (0.05 + campaign.score * 0.0015)); }
+  spending(campaign) {
+    const totalSpentInr=campaign.advances.reduce((sum,item)=>sum+item.amountInr,0);
+    const approvedSpendInr=campaign.proofs.filter(item=>item.status==='approved').reduce((sum,item)=>sum+item.amountInr,0);
+    return {totalSpentInr,approvedSpendInr,outstandingInr:Math.max(0,totalSpentInr-approvedSpendInr)};
+  }
   publicProof(proof, donorId) {
     const { invoiceKey, documentKey, voters, ...visible } = proof;
-    return { ...visible, voted: Boolean(donorId && voters.includes(donorId)) };
+    const walletVotes=proof.walletVotes ?? voters.filter(id=>id.startsWith('wallet:')).length;
+    return { ...visible,walletVotes,demoVotes:proof.demoVotes ?? Math.max(0,proof.yes+proof.no-walletVotes), voted: Boolean(donorId && voters.includes(donorId)) };
   }
   get(id, donorId) {
     const ngo = this.ngo(id), campaign = this.campaign(ngo);
-    const exposureInr = campaign.advances.reduce((sum, item) => sum + item.amountInr, 0);
+    const spending = this.spending(campaign), exposureInr=spending.outstandingInr;
     const allowanceInr = this.allowance(campaign);
     return { id: ngo.id, name: ngo.name, country: ngo.country, walletAddress: ngo.walletAddress,
       campaign: { id: campaign.id, name: campaign.name, category: campaign.category, budgetInr: campaign.budgetInr, fundraising: campaign.fundraising },
       score: campaign.score, hold: campaign.hold, frozen: Boolean(campaign.hold), allowanceInr, exposureInr,
-      allowanceLeftInr: Math.max(0, Math.min(allowanceInr - exposureInr, campaign.budgetInr - exposureInr)),
+      ...spending,
+      allowanceLeftInr: campaign.hold ? 0 : Math.max(0, Math.min(allowanceInr - exposureInr, campaign.budgetInr - spending.totalSpentInr)),
+      votingPolicy: { minimumReviews:3, approvalPercent:70, positiveScore:4, negativeScore:-6, duplicateScore:-12 },
       proofs: campaign.proofs.map(item => this.publicProof(item, donorId)),
       advances: campaign.advances.map(({ id: advanceId, amountInr, createdAt, demo }) => ({ id: advanceId, amountInr, createdAt, demo })),
       events: campaign.events, scoreHistory: campaign.scoreHistory,
       reputation: { approved: campaign.proofs.filter(item => item.status === 'approved').length, open: campaign.proofs.filter(item => item.status === 'review').length, flagged: campaign.proofs.filter(item => item.status === 'flagged').length },
+      blockchain: this.data.testnet ? {contract:this.data.testnet.contract,campaignId:this.data.testnet.campaignId,deploymentTx:this.data.testnet.deploymentTx,donations:this.data.testnet.donations || [],testEthDonated:formatEther((this.data.testnet.donations || []).reduce((sum,item)=>sum+BigInt(item.amountWei),0n))} : null,
+      donor: donorId ? (()=>{const donor=this.data.donors.find(item=>item.id===donorId);return donor ? {source:donor.demo?'demo':'verified_testnet_donor',wallet:donor.wallet || null} : null;})() : null,
       demo: true,
     };
   }
@@ -107,8 +118,8 @@ export class TrustStore {
     const ngo = this.ngo(id), campaign = this.campaign(ngo), amountInr = Number(input.amountInr);
     if (!money(amountInr)) fail(400, 'Enter a positive whole-rupee amount.');
     if (campaign.hold) fail(423, 'Local payments are paused: ' + campaign.hold.reason);
-    const exposure = campaign.advances.reduce((sum, item) => sum + item.amountInr, 0);
-    if (amountInr > this.allowance(campaign) - exposure || amountInr > campaign.budgetInr - exposure) fail(422, 'This payment exceeds the current trust-based limit.');
+    const spending=this.spending(campaign);
+    if (amountInr > this.allowance(campaign) - spending.outstandingInr || amountInr > campaign.budgetInr - spending.totalSpentInr) fail(422, 'This payment exceeds the current trust-based limit.');
     const advance = { id: randomUUID(), amountInr, createdAt: now(), demo: true };
     campaign.advances.push(advance);
     campaign.events.unshift({ id: randomUUID(), type: 'advance', title: 'Local payment recorded', detail: `₹${amountInr.toLocaleString('en-IN')} reserved within trust limit. Demo only.`, amountInr, createdAt: now() });
@@ -141,9 +152,14 @@ export class TrustStore {
     const overclaim = provedTotal + amountInr > advancedTotal;
     const wrongCategory = keyText(category) !== keyText(campaign.category);
     const checks = ['Invoice identity unique across NGOs and campaigns', documentHash ? 'Document fingerprint recorded' : 'No document fingerprint supplied', wrongCategory ? 'Category differs from campaign' : 'Category matches campaign', overclaim ? 'Claim exceeds recorded local payments' : 'Claim fits recorded local payments'];
-    const grade = clamp(95 - (documentHash ? 0 : 20) - (overclaim ? 35 : 0) - (wrongCategory ? 30 : 0) - (summary.length < 35 ? 15 : 0));
+    let grade = clamp(95 - (documentHash ? 0 : 20) - (overclaim ? 35 : 0) - (wrongCategory ? 30 : 0) - (summary.length < 35 ? 15 : 0));
+    if(input.verification){
+      const model=input.verification.checks;
+      grade=Math.min(grade,clamp(100-(model.amountMatches?0:30)-(model.categoryMatches?0:30)-(model.readable?0:20)-(model.suspicious?35:0)-(model.identityPresent?0:20)));
+      checks.push(model.amountMatches?'Receipt total matches claim':'Receipt total mismatch',model.readable?'Receipt readable':'Receipt unreadable',model.suspicious?'Visible inconsistencies require review':'No visual inconsistency reported by AI');
+    }
     const flagged = overclaim || wrongCategory || !documentHash || grade < 70 || input.verification?.status === 'needs_review';
-    const proof = { id: randomUUID(), title, summary, category, amountInr, invoiceKey, documentKey, commitment: `0x${this.digest(`${invoiceKey}|${amountInr}|${category}`)}`, publicImage, grade, checks, status: flagged ? 'flagged' : 'review', yes: 0, no: 0, final: flagged, voters: [], createdAt: now(), demo: true };
+    const proof = { id: randomUUID(), title, summary, category, amountInr, invoiceKey, documentKey, commitment: `0x${this.digest(`${invoiceKey}|${amountInr}|${category}`)}`, publicImage, grade, checks, status: flagged ? 'flagged' : 'review', yes: 0, no: 0, final: flagged, voters: [], createdAt: now(), demo: true, demoVotes:0, walletVotes:0 };
     campaign.proofs.unshift(proof);
     if (input.verification) {
       proof.evidenceId = input.verification.id;
@@ -164,6 +180,30 @@ export class TrustStore {
     this.save();
     return { donorId: donor.id, token, amountInr, demo: true };
   }
+  walletDonor(wallet,chainId) {
+    const id=`wallet:${chainId}:${wallet.toLowerCase()}`, token=randomBytes(32).toString('hex');
+    let donor=this.data.donors.find(item=>item.id===id);
+    if(!donor){donor={id,ngoId:'harbor-hands',wallet:wallet.toLowerCase(),chainId,demo:false,createdAt:now()};this.data.donors.push(donor);}
+    donor.tokenHash=this.digest(token);this.save();return {token,donorId:id,source:'verified_testnet_donor'};
+  }
+  publishVerified(id,input,record) {
+    const {analysis,publicRecord}=record;
+    const campaign=this.campaign(this.ngo(id));
+    const existing=campaign.proofs.find(item=>item.evidenceId===publicRecord.id);
+    if(existing)return {duplicate:false,replayed:true,proof:this.publicProof(existing),state:this.get(id)};
+    const fields={...input,vendor:analysis.vendor,invoice:analysis.invoice,amountInr:publicRecord.amountInr,title:publicRecord.title,summary:publicRecord.summary,documentHash:publicRecord.documentHash,publicImage:publicRecord.publicImage,verification:publicRecord};
+    if(!publicRecord.checks.identityPresent)fail(422,'Supplier and invoice could not be extracted. Upload a clearer receipt.');
+    const invoiceKey=this.digest(`${keyText(analysis.vendor)}|${keyText(analysis.invoice)}`),documentKey=this.digest(publicRecord.documentHash.toLowerCase());
+    const duplicate=this.data.ngos.flatMap(ngo=>ngo.campaigns).flatMap(c=>c.proofs).some(proof=>proof.invoiceKey===invoiceKey || proof.documentKey===documentKey);
+    if(duplicate)return this.proof(id,fields);
+    const before=structuredClone(this.data);
+    try{
+      if(input.recordPayment===true)this.advance(id,{amountInr:publicRecord.amountInr});
+      const result=this.proof(id,fields);
+      const stored=campaign.proofs.find(item=>item.id===result.proof.id);stored.source='gemini';stored.demo=publicRecord.sample===true;
+      this.save();return {...result,proof:this.publicProof(stored),state:this.get(id)};
+    }catch(error){this.data=before;this.save();throw error;}
+  }
   creditPayment(intentId, amountInr, transaction) {
     const campaign = this.campaign(this.ngo('harbor-hands'));
     campaign.creditedPayments ||= [];
@@ -175,10 +215,10 @@ export class TrustStore {
     this.save();
   }
   findDonor(token) {
-    if (!/^[\da-f]{64}$/.test(token || '')) fail(401, 'A demo donation token is required to vote.');
+    if (!/^[\da-f]{64}$/.test(token || '')) fail(401, 'Donor voting access is required.');
     const digest = Buffer.from(this.digest(token), 'hex');
     const donor = this.data.donors.find(item => timingSafeEqual(Buffer.from(item.tokenHash, 'hex'), digest));
-    if (!donor) fail(401, 'Demo donation token is invalid.');
+    if (!donor) fail(401, 'Donor voting access has expired.');
     return donor;
   }
   vote(id, proofId, token, support) {
@@ -189,7 +229,10 @@ export class TrustStore {
     if (proof.final) fail(409, 'This review is closed.');
     if (proof.voters.includes(donor.id)) fail(409, 'This donation has already voted on this receipt.');
     if (typeof support !== 'boolean') fail(400, 'Choose fair or question.');
+    proof.walletVotes ??= proof.voters.filter(id=>id.startsWith('wallet:')).length;
+    proof.demoVotes ??= Math.max(0,proof.yes+proof.no-proof.walletVotes);
     proof.voters.push(donor.id);
+    if(donor.demo)proof.demoVotes=(proof.demoVotes || 0)+1;else proof.walletVotes=(proof.walletVotes || 0)+1;
     if (support) proof.yes++; else proof.no++;
     if (proof.voters.length >= 3) {
       proof.final = true;

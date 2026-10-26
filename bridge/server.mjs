@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TrustStore } from './trust.mjs';
 import { Database } from './database.mjs';
-import { VerificationService } from './verification.mjs';
+import { VerificationService,sampleReceipt } from './verification.mjs';
 import { assertDonationEvent } from './chain.mjs';
 import { TestnetService } from './testnet.mjs';
 
@@ -161,7 +161,10 @@ async function handle(req, res, client) {
     if (req.method === 'GET' && url.pathname === '/api/testnet/config') return reply(res,200,testnet.config(trust));
     if (req.method === 'POST' && url.pathname === '/api/testnet/prepare') return reply(res,200,await testnet.prepare(trust,JSON.parse(await bodyText(req))));
     if (req.method === 'POST' && url.pathname === '/api/testnet/confirm') return reply(res,200,await testnet.confirm(trust,JSON.parse(await bodyText(req))));
+    if (req.method === 'POST' && url.pathname === '/api/testnet/voter/challenge') return reply(res,200,await testnet.voterChallenge(trust,JSON.parse(await bodyText(req))));
+    if (req.method === 'POST' && url.pathname === '/api/testnet/voter/session') return reply(res,200,await testnet.voterSession(trust,JSON.parse(await bodyText(req))));
     if (req.method === 'GET' && url.pathname === '/api/verification/config') return reply(res, 200, { configured: Boolean(verification.apiKey), model: verification.model });
+    if (req.method === 'GET' && url.pathname === '/api/verification/sample') return reply(res,200,{image:`data:image/png;base64,${(await sampleReceipt()).toString('base64')}`,amountInr:500});
     const analyzeMatch = /^\/api\/trust\/ngos\/([a-z0-9-]+)\/analyze$/.exec(url.pathname);
     if (req.method === 'POST' && analyzeMatch) {
       const ngo = trust.ngo(analyzeMatch[1]);
@@ -193,8 +196,8 @@ async function handle(req, res, client) {
       delete input.verification;
       if (input.evidenceId) {
         if (input.privacyReviewed !== true) return reply(res, 400, { error: 'Review the redacted preview before publication.' });
-        const { analysis, publicRecord } = await verification.load(input.evidenceId, proofMatch[1], client);
-        input = { ...input, vendor: analysis.vendor, invoice: analysis.invoice, amountInr: publicRecord.amountInr, title: publicRecord.title, summary: publicRecord.summary, documentHash: publicRecord.documentHash, publicImage: publicRecord.publicImage, verification: publicRecord };
+        const record = await verification.load(input.evidenceId, proofMatch[1], client);
+        return reply(res,201,trust.publishVerified(proofMatch[1],input,record));
       }
       return reply(res, 201, trust.proof(proofMatch[1], input));
     }

@@ -5,6 +5,11 @@ import sharp from 'sharp';
 
 const failure = (status, message) => Object.assign(new Error(message), { status });
 const imagePattern = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/;
+let samplePromise;
+export function sampleReceipt(){
+  samplePromise ||= sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000"><rect width="1000" height="1000" fill="#fffdf7"/><g font-family="Arial" fill="#222" font-size="30"><text x="60" y="75" font-size="38">DEMO WATER SUPPLIES</text><text x="60" y="130">Synthetic receipt — not a real expense</text><path d="M60 160H940" stroke="#222"/><text x="60" y="220">Invoice: LANTERN-DEMO-500</text><text x="60" y="280">Date: 26 October 2026</text><text x="60" y="370">Water pipe fittings and connector kit</text><text x="60" y="430">Quantity 1                         INR 500</text><text x="60" y="520" font-size="38">TOTAL: INR 500</text><path d="M60 560H940" stroke="#222"/><text x="60" y="640">Customer: Sample Person</text><text x="60" y="700">Email: sample@example.invalid</text><text x="60" y="760">Phone: 9990001234</text><text x="60" y="870">All names and details are fictional.</text><text x="60" y="930">Use this image to demonstrate privacy masking.</text></g></svg>`)).png().toBuffer();
+  return samplePromise;
+}
 const schema = {
   type: 'object', required: ['vendor','invoice','amount','currency','categoryMatches','readable','suspicious','redactions'],
   properties: {
@@ -81,7 +86,8 @@ export class VerificationService {
     const identityPresent = analysis.vendor.trim().length >= 2 && analysis.invoice.trim().length >= 2;
     const needsReview = !amountMatches || !analysis.categoryMatches || !analysis.readable || analysis.suspicious || !identityPresent;
     const id = randomUUID(), documentHash = `0x${createHash('sha256').update(original).digest('hex')}`;
-    const publicRecord = { id, ngoId, documentHash, amountInr, title: 'Receipt for campaign supplies or services', summary: `Expense evidence submitted for ${amountInr.toLocaleString('en-IN')} rupees. Private receipt details are withheld.`, publicImage: imageSafe ? `data:image/jpeg;base64,${redacted.toString('base64')}` : '', privacy: imageSafe ? 'automatically_redacted_review_required' : 'image_withheld', status: needsReview ? 'needs_review' : 'checks_passed', model: this.model, createdAt: new Date().toISOString(), checks: { amountMatches, categoryMatches: analysis.categoryMatches, readable: analysis.readable, suspicious: analysis.suspicious, identityPresent }, limitation: 'AI consistency assessment; does not establish authenticity or delivery.' };
+    const sample=documentHash===`0x${createHash('sha256').update(await sampleReceipt()).digest('hex')}`;
+    const publicRecord = { id, ngoId, documentHash, sample, amountInr, title: sample?'Sample water supplies receipt':'Receipt for campaign supplies or services', summary: `${sample?'Synthetic demonstration receipt':'Expense evidence submitted'} for ${amountInr.toLocaleString('en-IN')} rupees. Private receipt details are withheld.`, publicImage: imageSafe ? `data:image/jpeg;base64,${redacted.toString('base64')}` : '', privacy: imageSafe ? 'automatically_redacted_review_required' : 'image_withheld', status: needsReview ? 'needs_review' : 'checks_passed', model: this.model, createdAt: new Date().toISOString(), checks: { amountMatches, categoryMatches: analysis.categoryMatches, readable: analysis.readable, suspicious: analysis.suspicious, identityPresent }, limitation: 'AI consistency assessment; does not establish authenticity or delivery.' };
     const encryptedOriginal = seal(original, this.key), encryptedAnalysis = seal(JSON.stringify({ analysis, publicRecord }), this.key);
     if (client) await client.query('INSERT INTO evidence(id,ngo_id,document_hash,encrypted_original,encrypted_analysis,public_record) VALUES($1,$2,$3,$4,$5,$6)', [id,ngoId,documentHash,encryptedOriginal,encryptedAnalysis,JSON.stringify(publicRecord)]);
     else writeFileSync(join(this.dataDir, `${id}.json`), JSON.stringify({ id, ngoId, publicRecord, original: encryptedOriginal.toString('base64'), analysis: encryptedAnalysis.toString('base64') }), { mode: 0o600 });

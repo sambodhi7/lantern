@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { enableDonorReviews } from './wallet';
 
 type Action='deploy'|'create'|'donate';
 type Config={chainId:number;chainName:string;explorer:string;contract:string|null;owner?:string;campaignId:string|null;deploymentTx?:string;campaignTx?:string;donations:{transaction:string;testEth:string;from:string;createdAt:string}[]};
@@ -62,6 +63,7 @@ export default function BlockchainPanel(){
     finally{setBusy(false);}
   }
   async function retry(){if(!pending)return;setBusy(true);try{await verify(pending);}catch(error){setMessage(error instanceof Error?error.message:'Not confirmed yet.');}finally{setBusy(false);}}
+  async function review(){setBusy(true);try{setMessage('Sign a free ownership message to enable receipt reviews.');await enableDonorReviews();window.location.hash='';}catch(error){setMessage(error instanceof Error?error.message:'Could not enable reviews.');}finally{setBusy(false);}}
   const ownerMatches=!wallet || !config?.owner || wallet.toLowerCase()===config.owner.toLowerCase();
   const link=(hash:string,label:string)=><a href={`https://sepolia.etherscan.io/tx/${hash}`} target="_blank" rel="noreferrer">{label} ↗</a>;
   return <section className="blockchain-panel">
@@ -76,6 +78,7 @@ export default function BlockchainPanel(){
     {pending && <div className="blockchain-pending"><span>Pending {pending.action}: {link(pending.txHash,'View transaction')}</span><button disabled={busy} onClick={()=>void retry()}>Check confirmation</button><small>Your transaction reference is saved if you refresh. Avoid sending it again.</small></div>}
     {message && <p className="verification-message" role="status">{message}</p>}
     {!!config?.donations.length && <section className="blockchain-transactions"><h2>Public donation trail</h2>{config.donations.map(item=><div key={item.transaction}><strong>{item.testEth} test ETH</strong><span>{new Date(item.createdAt).toLocaleString('en-IN')}</span>{link(item.transaction,'Confirmed in escrow')}</div>)}</section>}
+    {config?.campaignId&&<button className="dark-button" disabled={busy} onClick={()=>void review()}>Use my donor wallet to review receipts</button>}
     <p className="blockchain-footnote">This testnet flow works without the INR payment provider. Test transactions are kept separate from the rupee fundraising figures.</p>
   </section>;
 }

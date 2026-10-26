@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { encodeDeployData, encodeFunctionData, decodeEventLog, parseEther, formatEther, stringToHex } from 'viem';
+import { encodeDeployData, encodeFunctionData, decodeEventLog, decodeFunctionResult, parseEther, formatEther, stringToHex, verifyMessage } from 'viem';
+import { randomUUID } from 'node:crypto';
 import { assertDonationEvent } from './chain.mjs';
 
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status});};
@@ -19,6 +20,29 @@ export class TestnetService {
   }
   config(trust) {
     return {chainId:this.chainId,chainName:'Ethereum Sepolia',explorer:'https://sepolia.etherscan.io',testnet:true,...(trust.data.testnet || {contract:null,campaignId:null,donations:[]})};
+  }
+  async voterChallenge(trust,input) {
+    const current=trust.data.testnet;
+    if(!current?.campaignId || !walletPattern.test(input.wallet || ''))fail(400,'Connect a wallet and create a campaign first.');
+    const wallet=input.wallet.toLowerCase();
+    const chain=await this.rpc('eth_chainId');if(Number(BigInt(chain))!==this.chainId)fail(502,'The backend RPC is on the wrong network.');
+    const data=encodeFunctionData({abi:this.artifact.abi,functionName:'contributions',args:[BigInt(current.campaignId),wallet]});
+    const contribution=decodeFunctionResult({abi:this.artifact.abi,functionName:'contributions',data:await this.rpc('eth_call',[{to:current.contract,data},'latest'])});
+    if(contribution<=0n)fail(403,'This wallet has not donated to the campaign. Make a test donation first.');
+    const id=randomUUID(),expiresAt=Date.now()+300000;
+    const message=`LANTERN donor review access\nSite: http://127.0.0.1:5173\nNetwork: ${this.chainId}\nContract: ${current.contract}\nCampaign: ${current.campaignId}\nWallet: ${wallet}\nNonce: ${id}\nExpires: ${new Date(expiresAt).toISOString()}\nThis signature grants receipt voting access. It does not transfer funds.`;
+    trust.data.voterChallenges ||= {};
+    for(const [key,value] of Object.entries(trust.data.voterChallenges))if(value.expiresAt<Date.now())delete trust.data.voterChallenges[key];
+    if(Object.keys(trust.data.voterChallenges).length>=100)fail(429,'Too many pending wallet checks. Retry after a few minutes.');
+    trust.data.voterChallenges[id]={wallet,message,expiresAt};trust.save();return {id,message,expiresAt};
+  }
+  async voterSession(trust,input) {
+    const challenge=trust.data.voterChallenges?.[input.id];
+    if(!challenge || challenge.expiresAt<Date.now())fail(401,'This wallet challenge expired. Connect again.');
+    let valid=false;try{valid=await verifyMessage({address:challenge.wallet,message:challenge.message,signature:input.signature});}catch{}
+    if(!valid)fail(401,'Wallet signature does not match the donor address.');
+    delete trust.data.voterChallenges[input.id];
+    return trust.walletDonor(challenge.wallet,this.chainId);
   }
   async prepare(trust,input) {
     if(!walletPattern.test(input.wallet || ''))fail(400,'Connect a valid Ethereum wallet first.');
@@ -71,6 +95,8 @@ export class TestnetService {
       if(String(tx.input).toLowerCase()!==data.toLowerCase() || BigInt(tx.value)<=0n)fail(400,'Transaction was not a donation to this campaign.');
       assertDonationEvent(receipt,{ledger:current.contract,wallet,campaignId:current.campaignId,amountWei:tx.value});
       current.donations.unshift({transaction:txHash,from:wallet,amountWei:BigInt(tx.value).toString(),testEth:formatEther(BigInt(tx.value)),createdAt:new Date().toISOString()});
+      const campaign=trust.campaign(trust.ngo('harbor-hands'));
+      campaign.events.unshift({id:txHash,type:'chain_donation',title:'Sepolia test donation confirmed',detail:'Test funds received by the public campaign escrow. No INR payment was made.',testEth:formatEther(BigInt(tx.value)),transaction:txHash,createdAt:new Date().toISOString(),demo:false});
     } else fail(400,'Unknown blockchain action.');
     trust.save();return this.config(trust);
   }

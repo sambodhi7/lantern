@@ -43,6 +43,16 @@ test('wallet deployment, campaign creation and donation are independently checke
     assert.equal(service.config(trust).donations.length,1);
     assert.equal(await client.getBalance({address:deployed.contract}),1000000000000000n);
     assert.equal(trust.get('harbor-hands').campaign.fundraising.raisedInr,1000000,'test tokens do not inflate INR raised');
+    await assert.rejects(service.voterChallenge(trust,{wallet:owner.account.address}),/has not donated/);
+    const challenge=await service.voterChallenge(trust,{wallet:donor.account.address});
+    const wrongSignature=await owner.signMessage({account:owner.account,message:challenge.message});
+    await assert.rejects(service.voterSession(trust,{id:challenge.id,signature:wrongSignature}),/does not match/);
+    const signature=await donor.signMessage({account:donor.account,message:challenge.message});
+    const session=await service.voterSession(trust,{id:challenge.id,signature});
+    assert.equal(session.source,'verified_testnet_donor');
+    const reviewed=trust.vote('harbor-hands','water-pump-071',session.token,true);
+    assert.equal(reviewed.score,72);
+    await assert.rejects(service.voterSession(trust,{id:challenge.id,signature}),/expired/);
     trust.reset();assert.equal(service.config(trust).contract,deployed.contract,'demo reset preserves the public deployment');
   }finally{await new Promise(resolve=>rpc.close(resolve));await connection.close();}
 });

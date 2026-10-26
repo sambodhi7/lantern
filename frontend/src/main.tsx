@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './SimpleApp';
+import App from './JourneyApp';
 import './simple.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
